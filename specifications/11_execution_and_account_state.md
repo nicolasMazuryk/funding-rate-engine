@@ -115,7 +115,7 @@ Native private streams push account-state events onto the bus (`08` §4). REST i
 | Positions | `PositionUpdate { symbol, qty, side, entryPx }` | position tracker (§8), risk (`13`) | REST `getPositions` |
 | Balances | `BalanceUpdate { asset, free, used }` | preflight (`12`), risk (`13`) | REST `getBalance` |
 
-- **Funding-fee event matching:** `fundingTime` must be within **±5 s** of the expected `T_settle` to match an intent (`00_globals.md` §6); a mismatched event inside tolerance is the known tight-tolerance failure mode (`02_strategy_1_ws.md` §3).
+- **Funding-fee event matching:** `fundingTime` must be within **±30 s** of the expected `T_settle` to match an intent (`00_globals.md` §6); a mismatched event inside tolerance is the known tight-tolerance failure mode (`02_strategy_1_ws.md` §3).
 - **Reconnect/gap:** on reconnect, a REST snapshot re-primes positions/balances/open-orders before resuming stream consumption — no silent state drift.
 
 ---
@@ -132,8 +132,6 @@ Native private streams push account-state events onto the bus (`08` §4). REST i
 ## 9. Funding-fee tracking
 
 - **Real-time accrual:** the `FundingFeeAccrued` event is the live signal that funding actually credited/charged — it opens the funding gate for WS-gated strategies (S1-WS/S2/S6) and stamps the intent's funding leg.
-- **Accrual rule:** funding is booked **iff the position was open at `T_settle`** (fill-time test, `00_globals.md` §3.1); an exit filled before `T_settle` zeros the funding leg. The tracker records `funding_received` (bool) and the settled amount per intent (`00_globals.md` §8.3).
-- **Attribution (S6):** at `T_settle` only the PRE_FUNDING leg exists, so the charge lands there; per-venue ledger labeling is audited during canary (`07_strategy_6.md` §2). The tracker books the conservative default until the audit confirms.
 - **History:** `fundingHistory` (REST) backfills settled amounts for reconciliation and analytics (`15`).
 
 ---

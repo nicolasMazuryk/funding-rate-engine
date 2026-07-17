@@ -13,12 +13,11 @@ Evaluated in preflight (`12` §3) before any venue write. All limits are per-ins
 
 | Limit | Default (fixed-sizing era) | Effect on breach |
 |---|---|---|
-| `max_concurrent_intents` | 1 | reject new intent while one is live |
-| `max_notional_usd` | `amount_usd` (20) | reject oversize/duplicate |
-| `max_daily_loss_usd` | configured | pause instance (kill switch → `paused`) |
+| `max_concurrent_intents` | 10 | reject new intent while one is live |
+| `max_notional_usd` | 100 | reject oversize/duplicate |
 | `breaker_error_threshold` | 5 consecutive venue errors | open circuit (§3) |
 
-The gate is pure and data-driven — no per-strategy special cases (DRY). With fixed $20 sizing and one concurrent intent, notional risk per instance is trivially bounded; the limits exist to catch **desync and runaway** conditions, not to size positions.
+The gate is pure and data-driven — no per-strategy special cases (DRY).
 
 ---
 
@@ -34,7 +33,7 @@ States and semantics are normative in `00_globals.md` §5.1:
 
 - Bootstrapped from `.env` `KILL_SWITCH` (`09` §2); runtime transitions are operational and **persisted** (`14`) so a restart honors the last state.
 - Engine-internal: `paused` produces **no** exchange-side activity; only `flatten` touches the venue.
-- Triggers: manual (ops), or automatic on a tripped daily-loss limit or an open circuit that stays open (§3).
+- Triggers: manual (ops), or automatic on an open circuit that stays open (§3).
 
 ---
 
@@ -61,7 +60,7 @@ An order-path breaker that opens **during** a live position does **not** abandon
 
 From `00_globals.md` §5.2/§5.3, made operational:
 
-- **Post-exit sweep** (`sweepReduceOnlyOrders`, §5.2): after every exit, cancel lingering reduce-only orders for the symbol. Expected, not pathological, for `sl_tp_deadline`-family strategies.
+- **Post-exit sweep** (`sweepReduceOnlyOrders`, §5.2): after every exit, cancel lingering reduce-only orders and unfilled entry limit orders (ladder) for the symbol. Expected, not pathological, for `sl_tp_deadline`-family strategies.
 - **Orphan auto-flatten** (§5.3): a venue position with no owning intent (crash/desync, detected via `PositionUpdate` vs intent store, `11` §8) is auto-flattened; a stale reduce-only sweep runs before entry.
 - **Ground truth on reconnect:** private-stream reconnect re-primes state from REST before resuming (`11` §7), preventing acting on stale account state.
 

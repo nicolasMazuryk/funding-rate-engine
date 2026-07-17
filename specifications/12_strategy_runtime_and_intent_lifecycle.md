@@ -45,7 +45,7 @@ Runs at entry time, before the first exchange write. Any failure terminates the 
 | Kill switch | state must be `off` (`00_globals.md` §5.1) | `error_code = kill_switch` |
 | Risk gate | concurrency, notional, daily-loss, breaker open (`13`) | reject intent |
 | Balance | free margin ≥ `amountUsd / leverage` (`BalanceUpdate`, `11` §7) | reject / `InsufficientBalance` |
-| Precision & min-limits | price tick, lot step, min-notional, min-qty (`11` §3) | **skip symbol** |
+| Precision & min-limits | price tick, lot step, min-notional, min-qty (`11` §3) | reject / `ContractLimits` |
 | Account setup | leverage/margin/position-mode applied (`11` §1) | hard reject |
 | Market status | `market.status == 'trading'` (`00_globals.md` §G-*) | skip |
 

@@ -26,7 +26,7 @@
 
 ---
 
-## 2. The 5×6 fleet
+## 2. The 5×7 fleet
 
 ```
              Binance  Bybit  OKX  Bitget  Gate.io  KuCoin
@@ -38,7 +38,7 @@ strategy_4_1a   ▪       ▪      ▪      ▪       ▪        ▪
    ...
 ```
 
-Any subset of the strategy set × the six venues; the illustration is 5×6 = **30 containers**. Each cell is an independent process with its own sub-account, config, DB, and lifecycle. Adding a strategy or a venue adds a row/column of containers — **no code change**, just config + secrets (the adapter and strategy already exist).
+Any subset of the strategy set × the six venues; the illustration is 5×7 = **35 containers**. Each cell is an independent process with its own sub-account, config, DB, and lifecycle. Adding a strategy or a venue adds a row/column of containers — **no code change**, just config + secrets (the adapter and strategy already exist).
 
 **Per-exchange deltas** (`00_globals.md` §6 — e.g. OKX `fundingFeeTimeoutSeconds = 45`, OKX `leverage = 4` on S1, OKX-only WS-order REST fallback) are applied per instance from the exchange profile (`09` §4), so the same strategy behaves correctly on every venue without branching.
 

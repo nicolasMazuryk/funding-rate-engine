@@ -59,7 +59,7 @@ At `init()`:
 3. Apply optional `symbols.deny` from config (`09` §3).
 4. Build the in-memory `Instrument` registry (§4), keyed by **normalized** symbol.
 
-The filtered set is the universe the opportunity finder (`12`) scans. Loaded **once at startup**; the funding *schedule* per symbol is re-read per event (intervals can change — `00_globals.md` §8.1), but the tradable-instrument set is stable within a run.
+The filtered set is the universe the opportunity finder (`12`) scans. `ccxt.loadMarkets()` run every hour and reload an updated list of markets. Loaded **at startup**, reloaded/updated every hour. The funding *schedule* per symbol is re-read per event (intervals can change — `00_globals.md` §8.1), the tradable-instrument set is reloaded once per hour.
 
 ---
 

@@ -38,7 +38,7 @@ One suite per venue, run against testnet, verifying the adapter honors the one i
 
 - **Market load/filter:** only perp-USDT active swaps survive (`10` §3); normalization and precision match ccxt metadata (`10` §4).
 - **Account setup:** one-way mode, isolated margin, leverage set in advance; `setLeverage` failure is a hard reject (`11` §1).
-- **Order path:** WS-first place/cancel, REST fallback (OKX), `clientOrderId` idempotency (resubmit is a no-op), min-notional/precision rejection surfaces as typed `OrderRejected` (`10` §5, `11`).
+- **Order path:** WS-first place/cancel, REST fallback, `clientOrderId` idempotency (resubmit is a no-op), min-notional/precision rejection surfaces as typed `OrderRejected` (`10` §5, `11`).
 - **Streams:** private (order/position/balance/funding-fee) and public (predicted funding, last price) produce the expected events; reconnect re-primes from REST (`11` §7).
 - **Error taxonomy:** induced errors map to the shared typed set (`10` §5); rate limiter reserves the order lane (`10` §6).
 - **Per-exchange deltas:** OKX timeout 45 s, OKX leverage 4 on S1, OKX REST fallback (`00_globals.md` §6) behave as configured.
