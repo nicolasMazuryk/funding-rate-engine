@@ -69,7 +69,7 @@ FEES    = per-fill fee class (taker/maker) from the exchange profile (09 §4)
 
 ## 5. Intent finite-state machine
 
-One intent = one strategy attempt on one symbol for one settlement. The intent FSM uses the shared FSM engine (`08` §5) and composes the order FSM (`11` §6). Every transition is WAL-persisted before its side effect (`14`).
+One intent = one strategy attempt on one symbol for one settlement. The intent FSM uses the shared FSM engine (`08` §5) and composes the order FSM (`11` §6). Every transition is appended to the local WAL before its side effect (`14` §2.1) — a fast on-box durable write, never a blocking network call — then asynchronously forwarded to the centralized Postgres.
 
 ```
                 preflight ok            entry filled              exit fires

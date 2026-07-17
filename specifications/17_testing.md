@@ -13,7 +13,7 @@
 |---|---|---|---|
 | **Unit** | pure core: selection, preflight, cost model, intent/order FSMs, sizing, symbol normalization | none (in-memory ports) | fast, deterministic |
 | **Integration** | adapters vs each venue: market load/filter, precision, WS streams, order path, error mapping | venue **testnet** / sandbox | slower, networked |
-| **End-to-end** | full instance: scheduler → intent → execution → persistence → accounting | simulated venue + real Postgres | medium |
+| **End-to-end** | full instance: scheduler → intent → execution → persistence → accounting | simulated venue + real Postgres (centralized) + local WAL file | medium |
 
 ---
 
@@ -38,10 +38,10 @@ One suite per venue, run against testnet, verifying the adapter honors the one i
 
 - **Market load/filter:** only perp-USDT active swaps survive (`10` §3); normalization and precision match ccxt metadata (`10` §4).
 - **Account setup:** one-way mode, isolated margin, leverage set in advance; `setLeverage` failure is a hard reject (`11` §1).
-- **Order path:** WS-first place/cancel, REST fallback, `clientOrderId` idempotency (resubmit is a no-op), min-notional/precision rejection surfaces as typed `OrderRejected` (`10` §5, `11`).
+- **Order path:** WS-first place/cancel, REST fallback (where the exchange profile enables it), `clientOrderId` idempotency (resubmit is a no-op), min-notional/precision rejection surfaces as typed `OrderRejected` (`10` §5, `11`).
 - **Streams:** private (order/position/balance/funding-fee) and public (predicted funding, last price) produce the expected events; reconnect re-primes from REST (`11` §7).
 - **Error taxonomy:** induced errors map to the shared typed set (`10` §5); rate limiter reserves the order lane (`10` §6).
-- **Per-exchange deltas:** OKX timeout 45 s, OKX leverage 4 on S1, OKX REST fallback (`00_globals.md` §6) behave as configured.
+- **Per-exchange deltas:** venue-specific timeout (e.g. 45 s), venue-specific leverage (e.g. 4 on S1), venue-specific REST fallback flag (`00_globals.md` §6) behave as configured, for whichever venue's profile sets them.
 
 These are the tests that catch venue quirks — the whole reason adapters exist.
 
@@ -49,11 +49,11 @@ These are the tests that catch venue quirks — the whole reason adapters exist.
 
 ## 4. End-to-end tests
 
-Drive a full instance with a **simulated venue** (a fake adapter implementing the port, or a recorded event replay) plus a real Postgres:
+Drive a full instance with a **simulated venue** (a fake adapter implementing the port, or a recorded event replay) plus a real (centralized) Postgres and a real local WAL file:
 
 - **Happy path per strategy:** replay a funding event → entry → monitor → exit; assert the produced trade record and `exit_reason` match expectation (one scenario per exit-policy kind, `00_globals.md` §Inventory).
 - **Failure paths:** WS event miss → timeout exit (S1-WS/S2/S6); limit never fills → `limit_expired`/`ladder_no_fills`; S6 PRE_FUNDING abort ladder → `close_pre_funding_failed` alerting.
-- **Crash recovery** (`14` §5): kill the process mid-intent, restart, assert deterministic resume/close and no double-submit (WAL + REST reconcile).
+- **Crash recovery** (`14` §5): kill the process mid-intent (including before the local WAL entry has been forwarded to Postgres), restart, assert deterministic resume/close and no double-submit (local WAL + REST reconcile).
 - **Kill switch / flatten** (`13`): `paused` rejects new intents; `flatten` closes tracked positions with `kill_switch_flatten`.
 
 ---

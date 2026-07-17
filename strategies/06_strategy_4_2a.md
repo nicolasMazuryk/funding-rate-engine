@@ -1,9 +1,9 @@
-# Strategy 4.2a — Post-Funding LONG Single Limit, No Funding
+# Strategy 4.2a — Post-Funding LONG Single Limit
 
 **Document:** `06_strategy_4_2a.md` · includes `00_globals.md` by reference · group common logic: `00_globals.md` §G-R
 **Exit policy kind:** `sl_tp_deadline`
 
-**Conclusion first.** S4.2a is the ladder collapsed to a single resting buy limit at a funding-scaled offset below the pre-event price — one fill, one `P_entry`, no averaging. `FUNDING_PNL = 0` unconditionally (§G-R). The two things the spec must nail are (a) the `limit_expired` no-fill terminal path, undocumented in the source and now normative (R5), and (b) the loader constraint `slMultiplier > limitOffsetMult`, without which the stop sits **above** the entry limit and the position is stopped out by construction. Same `takeProfitPct` unit hazard as 4.1a. Timing risk concentrates in fill selectivity: a single limit at `0.75×|F|` below reference either catches the drop or misses the event entirely — expect a high `limit_expired` rate in shallow-drop events, which is a cost of zero (minus opportunity), not a loss.
+**Conclusion first.** S4.2a is the ladder collapsed to a single resting buy limit at a funding-scaled offset below the pre-event price — one fill, one `P_entry`, no averaging. `FUNDING_PNL` is the actual exchange-accrued amount (§G-R) — 0 in the common case since the limit is meant to fill after `T_settle`, but real and exchange-sourced on a pre-settlement fill, never hardcoded. The two things the spec must nail are (a) the `limit_expired` no-fill terminal path, undocumented in the source and now normative (R5), and (b) the loader constraint `slMultiplier > limitOffsetMult`, without which the stop sits **above** the entry limit and the position is stopped out by construction. Same `takeProfitPct` unit hazard as 4.1a. Timing risk concentrates in fill selectivity: a single limit at `0.75×|F|` below reference either catches the drop or misses the event entirely — expect a high `limit_expired` rate in shallow-drop events, which is a cost of zero (minus opportunity), not a loss.
 
 ---
 
@@ -25,7 +25,8 @@ Identical to 4.1a §1 (threshold, guards), plus feasibility: skip the symbol if 
      Loader guarantees slMultiplier > limitOffsetMult, so P_SL < P_limit always.
 
 2. IF the limit fills at P_fill (intended: during the post-settlement drop;
-   a pre-settlement fill is logged, kept, and still earns no funding — §G-R):
+   a pre-settlement fill is logged, kept, and its funding is whatever the exchange
+   actually accrues, per §3.1 — §G-R):
    → PLACE TAKE-PROFIT: SELL LIMIT reduce-only at P_fill × (1 + takeProfitPct / 100)
    → SL + TP form the protective pair from that point (OCO semantics)
 
@@ -59,13 +60,13 @@ With `slMultiplier > limitOffsetMult`, a fill-and-immediate-stop is a real path 
 
 ```
 DELTA_PNL   = (P_exit − P_fill) / P_fill × 100
-FUNDING_PNL = 0                                        # unconditional (§G-R)
+FUNDING_PNL = funding_accrued_actual                   # exchange-sourced (11 §9), per §3.1; 0 unless a pre-T_settle fill (§G-R)
 FEES        = makerFeePct (entry) + [makerFeePct if tp_hit else takerFeePct]
-NET_PNL     = DELTA_PNL − FEES
+NET_PNL     = DELTA_PNL + FUNDING_PNL − FEES
 limit_expired path: NET_PNL = 0, no fees.
 ```
 
-**Profit condition (TP path):** `takeProfitPct > 2 × makerFeePct` → proposed 0.2 > 0.04 ✓. SL path loses `≈ (P_fill − P_SL)/P_fill × 100 ≤ |F| × (slMultiplier − limitOffsetMult)` plus fees (`P_fill ≤ P_limit`, so the realized SL distance can only be tighter than the placement geometry). Expectancy = `p_tp·(TP − fees) − p_sl·(SL_dist + fees) − p_deadline·E[loss|deadline]`, with `p_fill` itself a free parameter of `limitOffsetMult` — deeper offsets fill less often but at better prices. Live monitoring must report the fill-rate / conditional-P&L trade-off across `limitOffsetMult ∈ {0.5, 0.75, 1.0, 1.25}`.
+**Profit condition (TP path):** `takeProfitPct + FUNDING_PNL > 2 × makerFeePct` → in the common case (`FUNDING_PNL = 0`) proposed 0.2 > 0.04 ✓; a pre-settlement fill's real exchange-accrued funding shifts this by the exact accrued amount, never assumed. SL path loses `≈ (P_fill − P_SL)/P_fill × 100 ≤ |F| × (slMultiplier − limitOffsetMult)` plus fees (`P_fill ≤ P_limit`, so the realized SL distance can only be tighter than the placement geometry). Expectancy = `p_tp·(TP − fees) − p_sl·(SL_dist + fees) − p_deadline·E[loss|deadline]`, with `p_fill` itself a free parameter of `limitOffsetMult` — deeper offsets fill less often but at better prices. Live monitoring must report the fill-rate / conditional-P&L trade-off across `limitOffsetMult ∈ {0.5, 0.75, 1.0, 1.25}`.
 
 ## 5. Parameterization & schema
 

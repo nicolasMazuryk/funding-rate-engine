@@ -19,7 +19,7 @@ NET_PNL     = DELTA_PNL + FUNDING_PNL − FEES        # 00_globals §1.1
 ```
 
 - Uses **realized fills** (from `fills`, `14`) and the **settled** funding amount (from `funding_events`), not assumptions — slippage and fees are whatever actually filled.
-- Per-strategy decomposition is taken from each strategy's §4 (referenced, not re-derived): S1/S1-WS/S2 funding-collection; S3a short with funding cost; S4.*a `FUNDING_PNL = 0`; S6's `MAIN_DELTA + PRE_FUNDING_DELTA + FUNDING_PRE`.
+- Per-strategy decomposition is taken from each strategy's §4 (referenced, not re-derived): S1/S1-WS/S2 funding-collection; S3a short with funding cost; S4.*a funding pulled from actual exchange accrual (usually 0, real on pre-settlement fills, `00_globals.md` §G-R); S6's `MAIN_DELTA + PRE_FUNDING_DELTA + FUNDING_PRE`.
 - Output fields match `00_globals.md` §8.3: `P_entry`, `P_exit`, `P_avg`, `delta_pnl`, `funding_pnl`, `fee_cost`, `net_pnl`, `exit_reason`, `error_code`, `hold_duration_s`, `fill_count`, `funding_received`, `t_drop_offset_s`.
 
 ---
@@ -68,7 +68,7 @@ The output schema and enums are canonical (`00_globals.md` §8.3, §10), so the 
 
 ## 5. Fleet-level rollup
 
-Each instance produces its own reconciled trade records (its own DB, `16`). A read-only rollup aggregates across instances for fleet-wide P&L, per-strategy and per-exchange breakdowns, and cross-venue funding-attribution audits — without coupling instances at runtime (instances stay isolated; the rollup reads their databases offline/async).
+Each instance writes its reconciled trade records into the shared centralized DB (`16`), scoped by `instance_id`. The fleet rollup is a read-only query over that single DB (`GROUP BY exchange, strategy`, etc.) for fleet-wide P&L, per-strategy and per-exchange breakdowns, and cross-venue funding-attribution audits — without coupling instances at runtime: instances stay isolated at the write path and never talk to each other, and the rollup only reads.
 
 ---
 

@@ -1,9 +1,9 @@
-# Strategy 4.1a — Post-Funding LONG Ladder, No Funding
+# Strategy 4.1a — Post-Funding LONG Ladder
 
 **Document:** `05_strategy_4_1a.md` · includes `00_globals.md` by reference · group common logic: `00_globals.md` §G-R
 **Exit policy kind:** `sl_tp_deadline`
 
-**Conclusion first.** S4.1a pre-places a ladder of buy limits below the pre-event price, scaled by `|F|`, to be filled *by* the drop, and exits on a TP above the fill-weighted average. It receives **no funding, ever** (`FUNDING_PNL = 0` unconditionally — §G-R, reconciliation R7); the entire edge is delta recovery, which is empirically not guaranteed. Timing risk concentrates in the no-recovery path — the funding-scaled SL plus the deadline must price it — and the single largest spec-level hazard is the `takeProfitPct` unit (percent vs fraction; loader guard, `00_globals.md` §9.2 / §11-R4).
+**Conclusion first.** S4.1a pre-places a ladder of buy limits below the pre-event price, scaled by `|F|`, to be filled *by* the drop, and exits on a TP above the fill-weighted average. It normally receives no funding — rungs are meant to fill after `T_settle` — but a pre-settlement rung fill does accrue, and `FUNDING_PNL` is always the actual amount pulled from the exchange, never a hardcoded 0 (§G-R, reconciliation R7); the entire edge is still primarily delta recovery, which is empirically not guaranteed. Timing risk concentrates in the no-recovery path — the funding-scaled SL plus the deadline must price it — and the single largest spec-level hazard is the `takeProfitPct` unit (percent vs fraction; loader guard, `00_globals.md` §9.2 / §11-R4).
 
 ---
 
@@ -40,7 +40,8 @@ Additional feasibility gate at trigger time (before any order): if even the **to
         it is engine-tracked, not an exchange resting order, until a position exists.
 
 2. FILLS arrive during/after the drop (a rung may also fill BEFORE T_settle:
-   logged `ladder.pre_funding_fill` + ops event; position KEPT; FUNDING_PNL still 0 — §G-R).
+   logged `ladder.pre_funding_fill` + ops event; position KEPT; FUNDING_PNL is whatever the
+   exchange actually accrues on that leg, per §3.1 — §G-R).
 
 3. ON each rung fill:
    → recompute P_avg = fill-weighted average of FILLED rungs
@@ -80,13 +81,13 @@ Code ref: `src/execution/strategies/strategy_4_1a.ts`.
 ```
 P_avg       = Σ filled_price[i] × qty[i] / Σ qty[i]
 DELTA_PNL   = (P_exit − P_avg) / P_avg × 100
-FUNDING_PNL = 0                                   # unconditional for 4.* (§G-R, R7)
+FUNDING_PNL = funding_accrued_actual              # exchange-sourced (11 §9), per §3.1; 0 unless a rung filled pre-T_settle (§G-R, R7)
 FEES        = num_filled_rungs-weighted maker entries + exit fee
             = makerFeePct (entry, per filled notional) + [makerFeePct if tp_hit else takerFeePct]
-NET_PNL     = DELTA_PNL − FEES
+NET_PNL     = DELTA_PNL + FUNDING_PNL − FEES
 ```
 
-**Profit condition:** `DELTA_PNL > FEES`, i.e. on the TP path `takeProfitPct > makerFeePct + makerFeePct` → at proposed fees, `takeProfitPct > 0.04`. Proposed `takeProfitPct = 0.3` clears it 7×; the source live value `0.003` would sit **below one maker fee** and is rejected by the unit guard (R4). The real economics are in the path mix: SL path loses ≈ `|F| × slMultiplier` (from `P_avg_full`, minus fill-mix effects) plus fees with no funding cushion; deadline path is unbounded-ish downside capped only by time. Live monitoring must report fill-count distribution, path mix, and `NET_PNL` conditioned on the three recovery regimes of `00_globals.md` §2.3.
+**Profit condition:** `DELTA_PNL + FUNDING_PNL > FEES`. In the common case (all fills land after `T_settle`) `FUNDING_PNL = 0` and this reduces to `DELTA_PNL > FEES`, i.e. on the TP path `takeProfitPct > makerFeePct + makerFeePct` → at proposed fees, `takeProfitPct > 0.04`. Proposed `takeProfitPct = 0.3` clears it 7×; the source live value `0.003` would sit **below one maker fee** and is rejected by the unit guard (R4). On a pre-settlement rung fill, `FUNDING_PNL` is the real exchange-accrued amount and shifts the condition accordingly — a windfall credit lowers the bar, a charge raises it; the engine must not assume either. The real economics are still dominated by the path mix: SL path loses ≈ `|F| × slMultiplier` (from `P_avg_full`, minus fill-mix effects) plus fees, largely without a funding cushion; deadline path is unbounded-ish downside capped only by time. Live monitoring must report fill-count distribution, path mix, and `NET_PNL` conditioned on the three recovery regimes of `00_globals.md` §2.3.
 
 ## 5. Parameterization & schema
 

@@ -87,7 +87,7 @@ Venue errors (ccxt and native) are mapped to a **small typed set** the core unde
 | Typed error | Trigger (examples) | Handling |
 |---|---|---|
 | `RateLimited` | HTTP 429, venue rate-limit code | back off via rate limiter (§7); retry |
-| `WsTimeout` | no WS ack within window | REST fallback (OKX only for orders, `00_globals.md` §6); else retry/abort |
+| `WsTimeout` | no WS ack within window | REST fallback for orders where the exchange profile enables it (`00_globals.md` §6); else retry/abort |
 | `OrderRejected` | min-notional, precision, reduce-only violation, margin | surfaced to order FSM (`11`) → intent error_code |
 | `InsufficientBalance` | margin/balance | preflight reject (`12`) / risk event (`13`) |
 | `AuthError` | bad key/permission/IP | **fatal at startup**, fail-loud |

@@ -108,7 +108,7 @@ NET_PNL           = MAIN_DELTA + PRE_FUNDING_DELTA + FUNDING_PRE − FEES
 | `main_side` | `mainSide` | enum `long|short` | **long** | *(required)* | |
 | `F_threshold_s6` | `fundingThresholdPercent` — **legacy engine key `funding_threshold` accepted as alias for one migration cycle, warn on use (R6)** | percent, **signed** (any sign; 0 = always-on) | **+0.1** | 0 | independent of `mainSide` |
 | `entry_offset_seconds` | `entryOffsetSeconds` | seconds | **3** | 10 | PRE_FUNDING placement |
-| `ws_timeout` | `fundingFeeTimeoutSeconds` | seconds | **10** (**OKX: 45**) | 30 | abort trigger |
+| `ws_timeout` | `fundingFeeTimeoutSeconds` | seconds | **10** (per-exchange delta may override, e.g. 45) | 30 | abort trigger |
 | `TP_mult_6` | `tpMultiplier` | multiplier on `|F|` | **1.5** | 0.5 | computed at MAIN fill from settled rate |
 | `sl_mult` | `slMultiplier` | multiplier on `|F|` | **1.5** | 1.0 | bound 0.5–4.0 |
 | `T_deadline` | `deadlineSeconds` | seconds | **1800** | 3300 | bound 10–3600 (R3; note 3300 ≤ 3600 ✓) |

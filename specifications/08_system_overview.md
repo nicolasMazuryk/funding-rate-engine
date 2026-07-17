@@ -105,7 +105,7 @@ Explicitly **avoided** (overengineering): message brokers, microservices, plugin
 | Language / runtime | **Node.js + TypeScript (`strict: true`)** |
 | Exchange I/O | **ccxt** (unified REST + market metadata) + native venue libs for WS/order speed (`binance`, `bybit-api`, `okx-api`, `bitget-api`, `gateio-api`, `kucoin-api`) |
 | WebSockets | native venue libs (private + public streams); `ws` where a raw socket is needed |
-| Persistence | **Postgres** via **Drizzle ORM** (typed schema, migrations) |
+| Persistence | **Postgres** via **Drizzle ORM** (typed schema, migrations), single centralized DB for the fleet, fronted by a local per-instance WAL file (`14` §2.1) so the hot path never blocks on it |
 | Config | **YAML** (`yaml`) for everything non-secret; **dotenv** for secrets; **Zod** for validation |
 | Logging | **Pino** (structured JSON, one logger per instance with `exchange`+`strategy` bindings) |
 | Containerization | **Docker** (one image, one container per instance) |
@@ -158,7 +158,7 @@ HH:00:0x  Strategy exit policy (per 01..07) manages TP/SL/deadline or funding-fe
 after     Post-exit sweep (00_globals §5.2) → accounting reconciles fills, funding, P&L (15).
 ```
 
-Every transition is persisted (WAL, `14`) before the side effect, so a crash resumes deterministically.
+Every transition is durably appended to the local WAL (`14` §2.1) before the side effect — that on-box append is what gates the side effect, so a crash resumes deterministically, and Postgres latency stays off the hot path.
 
 ---
 

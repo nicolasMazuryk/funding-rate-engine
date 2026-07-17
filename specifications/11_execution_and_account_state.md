@@ -3,7 +3,7 @@
 **Document:** `11_execution_and_account_state.md` · includes `00_globals.md` by reference
 **Covers:** order management (WS-first, REST fallback), the order FSM, idempotency, account setup (leverage/margin/position mode), precision & min-limit enforcement, sizing/denomination, private WS streams (orders, positions, balances, funding-fee), and position + funding-fee tracking.
 
-**Conclusion first.** This is the **write + account-state** layer between intents (`12`) and the venue. Orders are placed and cancelled **over WebSocket**, falling back to REST only on WS failure (OKX being the sanctioned WS-order REST fallback, `00_globals.md` §6). Every order carries a `clientOrderId` for idempotency. Account plumbing — one-way position mode, isolated margin, leverage — is set **once in advance**, never mid-trade. Positions and funding are tracked from private WS events with REST as ground truth.
+**Conclusion first.** This is the **write + account-state** layer between intents (`12`) and the venue. Orders are placed and cancelled **over WebSocket**, falling back to REST only on WS failure and only where the exchange profile enables it (`ws_order_rest_fallback`, `00_globals.md` §6 — a per-exchange config flag, not a code branch on venue name). Every order carries a `clientOrderId` for idempotency. Account plumbing — one-way position mode, isolated margin, leverage — is set **once in advance**, never mid-trade. Positions and funding are tracked from private WS events with REST as ground truth.
 
 ---
 
@@ -54,7 +54,7 @@ A symbol failing min-notional at the **top/only** rung is skipped entirely (ladd
 
 - Every order gets a deterministic `clientOrderId` = `f(intentId, leg, attempt)` — unique, reproducible, and safe to **retry** without double-submitting.
 - On WS→REST fallback or reconnect, the engine **re-queries by `clientOrderId`** (`getOrder`) instead of blindly resubmitting; an already-accepted order is adopted, not duplicated.
-- The WAL (`14`) records the `clientOrderId` **before** submission, so recovery can reconcile "did this order reach the venue?" deterministically.
+- The local WAL append (`14` §2.1) records the `clientOrderId` **before** submission — a fast on-box durable write, so recovery can reconcile "did this order reach the venue?" deterministically without adding Postgres latency to the hot path.
 
 ---
 
@@ -64,13 +64,13 @@ A symbol failing min-notional at the **top/only** rung is skipped entirely (ladd
 place / cancel:
   try WS order adapter (native lib)                       # 00_globals §6 hot path
   on WsTimeout / WS error:
-    OKX      → REST fallback (sanctioned, §6)
-    others   → bounded retry on WS; then abort the leg → OrderRejected/main_order_failed
+    if exchange profile enables ws_order_rest_fallback (§6) → REST fallback
+    else                                                    → bounded retry on WS; then abort the leg → OrderRejected/main_order_failed
   confirm via OrderUpdate event; if no event in window → REST getOrder poll
              (10 s timeout, ≤ 15 polls, circuit-open on consecutive errors — §6)
 ```
 
-- **WS-mandatory strategies** (`strategy_1_ws`, `strategy_2`, `strategy_6`) require the WS order adapter and **throw at startup** without one; only OKX may fall back to REST for orders (`00_globals.md` §6).
+- **WS-mandatory strategies** (`strategy_1_ws`, `strategy_2`, `strategy_6`) require the WS order adapter and **throw at startup** without one; REST fallback for orders is available only where the exchange profile's `ws_order_rest_fallback` flag is set (`00_globals.md` §6) — data-driven per venue, not a special case for any one exchange.
 - **Submission stagger** per venue (Bybit 150 ms, Binance 100 ms, others 100 ms default; `00_globals.md` §6) serializes multi-order placements (e.g. ladder rungs).
 - **Rate-limit reserve** (`10` §6) guarantees the order lane against market-data starvation.
 
@@ -91,7 +91,7 @@ FAILED               REJECTED            └──────────▶ EX
 
 | State | Meaning | Exit edges |
 |---|---|---|
-| `NEW` | request built, `clientOrderId` WAL-written | → `SUBMITTING` |
+| `NEW` | request built, `clientOrderId` written to the local WAL (`14` §2.1) | → `SUBMITTING` |
 | `SUBMITTING` | sent (WS/REST), awaiting ack | → `OPEN` / `REJECTED` / `FAILED` |
 | `OPEN` | resting/live on venue | → `FILLED` / `CANCELLED` / `EXPIRED` |
 | `FILLED` | fully filled (records `fillPx`, `qty`) | terminal → intent |
@@ -138,4 +138,4 @@ Native private streams push account-state events onto the bus (`08` §4). REST i
 
 ## 10. Boundaries
 
-This layer owns venue-facing writes and account state; it does **not** decide *when* to trade (that is the strategy runtime, `12`) or *whether* it's safe to trade (risk, `13`). It emits order/position/funding facts as events and executes intent commands. Everything here is persisted through the WAL before the side effect (`14`) so execution is crash-recoverable and idempotent.
+This layer owns venue-facing writes and account state; it does **not** decide *when* to trade (that is the strategy runtime, `12`) or *whether* it's safe to trade (risk, `13`). It emits order/position/funding facts as events and executes intent commands. Everything here is durably appended to the local WAL before the side effect (`14` §2.1) — never blocking on a network write — so execution is crash-recoverable, idempotent, and the hot path stays clear of Postgres latency.

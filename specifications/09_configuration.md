@@ -30,10 +30,10 @@ SUBACCOUNT=fund-s1ws-binance
 # secrets (per sub-account)
 BINANCE_API_KEY=...
 BINANCE_API_SECRET=...
-# OKX also needs BINANCE_API_PASSPHRASE-style passphrase where applicable
+# some exchanges also need a *_API_PASSPHRASE-style passphrase where applicable
 
 # infra
-DATABASE_URL=postgres://user:pass@host:5432/trading_s1ws_binance
+DATABASE_URL=postgres://user:pass@host:5432/trading_fleet   # centralized DB, same value across every instance (14, 16 §1)
 LOG_LEVEL=info
 KILL_SWITCH=off            # off | paused | flatten  (bootstrap; 00_globals §7.1)
 ```
@@ -54,12 +54,12 @@ instance:
 
 sizing:
   amount_usd: 20                # fixed sizing for now (brief); 00_globals §4
-  leverage: 5                   # per-exchange delta may override (OKX=4 on S1)
+  leverage: 5                   # per-exchange delta may override (e.g. 4 on S1 for a given venue)
 
 strategy_params:                # validated against the strategy's slice of §8.2
   negative_funding_threshold_percent: -0.4
   entry_offset_seconds: 3
-  funding_fee_timeout_seconds: 10   # OKX profile overrides to 45 (§6)
+  funding_fee_timeout_seconds: 10   # a venue's exchange profile may override, e.g. to 45 (§6)
   # ... only the keys this strategy consumes; unknown keys = hard error
 
 risk:                           # see 13_risk_and_failure_modes.md
@@ -103,7 +103,7 @@ okx:
   deltas:
     funding_fee_timeout_seconds: 45 # 00_globals §6
     leverage_strategy_1: 4          # 00_globals §6
-    ws_order_rest_fallback: true    # OKX-only REST fallback on WS_TIMEOUT (§6)
+    ws_order_rest_fallback: true    # this venue's profile enables REST fallback on WS_TIMEOUT (§6) — any exchange may set this flag
 ```
 
 Deltas are applied **after** base validation and **re-validated** against the same bounds, so a delta can never push a value out of range silently.
@@ -131,7 +131,7 @@ Deltas are applied **after** base validation and **re-validated** against the sa
 | Check | Rule | Source |
 |---|---|---|
 | Co-run guard | reject `strategy_3a` alongside any LONG strategy; one strategy per container anyway | `00_globals.md` §9.1 |
-| WS-mandatory guard | `strategy_1_ws` / `strategy_2` / `strategy_6` require a WS order adapter → **throw at startup** if the venue/profile can't provide one (OKX REST fallback is the only exception) | `00_globals.md` §6 |
+| WS-mandatory guard | `strategy_1_ws` / `strategy_2` / `strategy_6` require a WS order adapter → **throw at startup** if the venue/profile can't provide one (a venue whose profile sets `ws_order_rest_fallback: true` is the only exception, `00_globals.md` §6) | `00_globals.md` §6 |
 | Sizing feasibility hint | `amount_usd` ≥ venue min-notional for the cheapest tradable symbol (soft warn; hard per-symbol check at preflight, `12`) | `00_globals.md` §4 |
 | Deadline vs timeout sanity | `deadline_seconds` ≥ `funding_fee_timeout_seconds` where both apply (S2/S6) | bounds §9.1 |
 | Secret presence | required keys for the selected exchange are present and non-empty | this doc |

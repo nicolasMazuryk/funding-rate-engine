@@ -15,7 +15,7 @@ Identical to S1 — `00_globals.md` §G-L, no deltas. (Same threshold key, same 
 
 | # | Time (rel.) | Action | Order / event | Price formula | Expiry/cancel |
 |---|---|---|---|---|---|
-| 1 | `T_settle − entryOffsetSeconds` | decide entry | BUY MARKET via **WS order adapter** (mandatory; engine throws at startup without one; OKX-only REST fallback on `WS_TIMEOUT`) | best ask | — |
+| 1 | `T_settle − entryOffsetSeconds` | decide entry | BUY MARKET via **WS order adapter** (mandatory; engine throws at startup without one; REST fallback on `WS_TIMEOUT` only where the exchange profile enables it) | best ask | — |
 | 2 | after `T_settle` | await `ws.funding_fee` for (exchange, symbol) with `fundingTime` within ±5 s of `T_settle` | event | — | — |
 | 2b | `T_settle + 3 s` | REST funding-fee poll fires, 8 s grace; observing the credit opens the funding gate exactly as the WS event would (`00_globals.md` §6) | REST | — | — |
 | 3 | on gate open (WS or REST) | EXIT | SELL MARKET **reduce-only** at best bid (WS adapter) | bid | — |
@@ -33,7 +33,7 @@ Observability: `intent.funding_gate_opened` / `intent.funding_gate_closed`. Code
 | Event exit | funding gate opens (WS event or REST poll) | ≈ `T_drop` + reaction latency | `funding_fee_event` |
 | Timeout exit | gate never opens | `T_settle + fundingFeeTimeoutSeconds` | `funding_fee_timeout` |
 
-- No SL/TP/deadline beyond the timeout. The timeout is the delta-exposure cap: it must be long enough to avoid routine false timeouts (event lag ≤ 10 s empirically) and short enough to bound exposure — hence proposed 10 s (OKX 45 s, a measured venue delta).
+- No SL/TP/deadline beyond the timeout. The timeout is the delta-exposure cap: it must be long enough to avoid routine false timeouts (event lag ≤ 10 s empirically) and short enough to bound exposure — hence proposed 10 s (some venues carry a measured delta, e.g. 45 s, as ordinary exchange-profile data).
 - **Assumptions carried from source (still binding):** the private stream emits funding-fee events with enough symbol/funding-time context to match the intent; funding is credited at or before event observation; the reduce-only close path survives a WS order rejection via immediate REST fallback.
 - **Failure mode to watch:** a *mismatched* event (wrong cycle inside the ±5 s tolerance) closes earlier than intended — tolerance is deliberately tight.
 
@@ -54,7 +54,7 @@ NET_PNL     = DELTA_PNL + FUNDING_PNL − FEES
 |---|---|---|---|---|---|
 | `F_threshold` | `negativeFundingThresholdPercent` | percent, signed < 0 | **−0.4** | −0.4 | R10 |
 | `entry_offset_seconds` | `entryOffsetSeconds` | seconds | **3** | 5 | bound ≥ 2 |
-| `ws_timeout` | `fundingFeeTimeoutSeconds` | seconds | **10** (**OKX: 45**) | 30 | bound 5–120; OKX delta per `00_globals.md` §6 |
+| `ws_timeout` | `fundingFeeTimeoutSeconds` | seconds | **10** (per-exchange delta may override, e.g. 45) | 30 | bound 5–120; exchange delta per `00_globals.md` §6 |
 | — | `amountUsd` | USD | 10 | 20 | |
 | — | `leverage` | int | 5 | 4 | |
 | — | `taker_fee_pct` per `00_globals.md` §8.2 | percent | 0.05 | | |

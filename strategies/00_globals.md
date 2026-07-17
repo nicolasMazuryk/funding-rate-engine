@@ -99,13 +99,13 @@ Orphan-position auto-flatten and a stale reduce-only sweep before entry clean up
 ## 6. Live-engine order path & per-exchange deltas
 
 - **Order placement latency:** live estimate 800 ms network + engine, budgeted into every offset calculation.
-- **WS-mandatory strategies:** `strategy_1_ws`, `strategy_2`, `strategy_6` place orders over the WS order adapter and **throw at startup** if none is available. **OKX and only OKX** falls back to REST on `WS_TIMEOUT`.
+- **WS-mandatory strategies:** `strategy_1_ws`, `strategy_2`, `strategy_6` place orders over the WS order adapter and **throw at startup** if none is available. REST fallback on `WS_TIMEOUT` is a per-exchange config flag (`ws_order_rest_fallback` in the exchange profile, `09` §4).
 - **Submission stagger:** serialized per exchange — Bybit 150 ms, Binance 100 ms (other venues: 100 ms default until measured).
 - **Rate-limit reservation:** 10% of each exchange's rate budget reserved for order submit/cancel.
 - **REST fill-poll:** on a missed WS fill, poll `getOrder` (10 s timeout, ≤ 15 polls), circuit-open on consecutive errors.
 - **REST funding-fee poll:** for WS-gated strategies, fires at `T_settle + 3 s` with an 8 s grace period; observing the credit opens the funding gate before/without the WS event.
 - **Funding-fee event matching tolerance:** ±5 s between event `fundingTime` and expected `T_settle`.
-- **Per-exchange config deltas (carried from source):** OKX `fundingFeeTimeoutSeconds` = 45 (vs 10 elsewhere); OKX `leverage` = 4 on strategy_1 (5 elsewhere).
+- **Per-exchange config deltas (carried from source):** any exchange profile may override `fundingFeeTimeoutSeconds`, `leverage`, or `ws_order_rest_fallback` from the strategy-level default.
 
 ---
 
@@ -237,10 +237,10 @@ The classic defect: a take-profit written as a decimal fraction but read as perc
 - Same selection family as §G-L; direction SHORT flips the funding leg: `FUNDING_PNL = −|F|` (shorts pay, iff open at `T_settle` per §3.1). Profit condition `DELTA_PNL > |F| + FEES`.
 - Entry SELL MARKET at `T_settle − entryOffsetSeconds`; immediate OCO (fixed-percent SL stop-market above, funding-scaled TP limit below); deadline market close. Full spec: `04_strategy_3a.md`.
 
-### §G-R — Post-settlement recovery: limit entries, no funding (S4.1a, S4.2a)
+### §G-R — Post-settlement recovery: limit entries, funding rarely accrued (S4.1a, S4.2a)
 
-- **Thesis:** buy the drop with resting limits placed at `T_settle − entryOffsetSeconds`, priced below the pre-event reference by funding-scaled offsets; intended to fill after `T_settle` during the drop. **For all 4.\* strategies `FUNDING_PNL = 0` unconditionally, regardless of when any limit fills.** The edge is pure delta recovery — empirically **not guaranteed** (§2.3); continued-decline paths must be survivable via SL + deadline.
-- **No pre-settlement-fill exception:** a rung/limit filling **before** `T_settle` is logged (`ladder.pre_funding_fill` + ops event) and the position is **kept**, but it accrues **no funding**: all 4.\* strategies book `FUNDING_PNL = 0` unconditionally. **RECONCILIATION §11-R7:** the source `strategy_4_1.md` claimed a pre-settlement fill *does* accrue funding; superseded — economically the exchange may credit it, but the specification books it as 0 (conservative: discards a small windfall, never invents one).
+- **Thesis:** buy the drop with resting limits placed at `T_settle − entryOffsetSeconds`, priced below the pre-event reference by funding-scaled offsets; intended to fill after `T_settle` during the drop. Because most fills land after `T_settle`, `FUNDING_PNL` is usually **0** under the standard accrual rule (§3.1) — but that is a consequence of *when* the rung fills, not a strategy-wide constant. The edge is primarily delta recovery — empirically **not guaranteed** (§2.3); continued-decline paths must be survivable via SL + deadline.
+- **Pre-settlement fills accrue real funding — pulled from the exchange, never assumed.** A rung/limit filling **before** `T_settle` is logged (`ladder.pre_funding_fill` + ops event), the position is **kept**, and it is tested against §3.1 exactly like every other strategy: if open at `T_settle`, it accrues. The engine never derives the amount from `|F|`; it reads the **actual settled amount from the exchange** (`FundingFeeAccrued` event / `fundingHistory` REST, `11` §9) and books whatever the venue actually credited or charged. **RECONCILIATION §11-R7:** `FUNDING_PNL` for 4.\* is exchange-sourced actual accrual, applied per §3.1 like any other strategy — never a hardcoded constant in either direction.
 - **Exit skeleton:** SL (funding-scaled below average fill), TP limit above average fill, deadline market close, unfilled-limit expiry (`limit_expired` / `ladder_no_fills`).
 
 ### §G-D — Event-gated directional (S6)
@@ -257,8 +257,8 @@ The classic defect: a take-profit written as a decimal fraction but read as perc
 | 1 WS | L | LONG | receives `+|F|` | market, pre-settle | `funding_fee_event` | `02_strategy_1_ws.md` |
 | 2 | L | LONG | receives `+|F|` | market, pre-settle | `sl_tp_deadline_retracement_funding_event` | `03_strategy_2.md` |
 | 3a | S | SHORT | pays `−|F|` | market, pre-settle | `sl_tp_deadline` | `04_strategy_3a.md` |
-| 4.1a | R | LONG | none (0) | ladder limits, pre-placed | `sl_tp_deadline` | `05_strategy_4_1a.md` |
-| 4.2a | R | LONG | none (0) | single limit, pre-placed | `sl_tp_deadline` | `06_strategy_4_2a.md` |
+| 4.1a | R | LONG | exchange-sourced actual (usually 0) | ladder limits, pre-placed | `sl_tp_deadline` | `05_strategy_4_1a.md` |
+| 4.2a | R | LONG | exchange-sourced actual (usually 0) | single limit, pre-placed | `sl_tp_deadline` | `06_strategy_4_2a.md` |
 | 6 | D | configurable | PRE leg pays | tiny opposite pre-fund + MAIN on WS event | `sl_tp_deadline_post_funding_event` | shadow/canary protocol, `07_strategy_6.md` §6 |
 
 ---
@@ -273,9 +273,9 @@ The classic defect: a take-profit written as a decimal fraction but read as perc
 | **R4 — `takeProfitPct` unit** | schema default 0.2 (percent) but live value `0.003` ⚠️ | percent everywhere; loader guard rejects v < 0.05 as `unit_suspect_fraction` | `0.003` is almost certainly a fraction (0.3%) mis-entered into a percent field → an effective 0.3 bp TP, below one maker fee. Highest-risk key in the system. |
 | **R5 — `limit_expired`** | code-only, undocumented outcome | normative `error_code` (§10.2), specified in `06_strategy_4_2a.md` | Undocumented terminal states are coverage gaps. |
 | **R6 — S6 threshold key** | live key `funding_threshold` (snake_case outlier in a camelCase schema) | canonical live key `fundingThresholdPercent`; engine must accept legacy alias `funding_threshold` for one migration cycle, warn on use | Schema-shape inconsistency is exactly the defect class §9.2 exists to kill. |
-| **R7 — 4.1a pre-settlement fill funding** | "the position does accrue funding" | booked as `FUNDING_PNL = 0` unconditionally for 4.\* | Framework mandate; conservative accounting choice. |
+| **R7 — 4.1a pre-settlement fill funding** | "the position does accrue funding" | `FUNDING_PNL` for 4.\* is pulled from actual exchange-reported accrual (§3.1 accrual rule, same as every strategy) — not hardcoded to 0 and not derived from `|F|` | Hardcoding to 0 silently discarded real, exchange-confirmed funding on pre-settlement fills; the exchange is the source of truth. |
 | **R8 — S2 anchor/TP framing** | original spec's one-shot Fibonacci limit `[0.3, 0.618]`; "resolved" note describes trailing tracker | trailing tracker is normative; `retracementPct` proposed 1.0 with deadline-frequency requirement (`03_strategy_2.md` §3) | One-shot limit at the final low is double lookahead; rejected. |
-| **R9 — S1-WS/S2 timeout values** | mixed 10/30/45 across files | per-strategy proposed values on each file's §5 table; OKX=45 preserved as an exchange delta | Consolidation. |
+| **R9 — S1-WS/S2 timeout values** | mixed 10/30/45 across files | per-strategy proposed values on each file's §5 table; any venue-specific value (e.g. 45 s) is an ordinary exchange-profile delta, not tied to one named exchange | Consolidation. |
 | **R10 — Group-L threshold** | live −0.1 everywhere | proposed −0.4 (schema default −0.4); −0.1 retained as sweep point | §G-L threshold economics. |
 | **R11 — 4.1a SL/TP lifecycle** | SL+TP both placed only after `T_settle` once unfilled rungs are cancelled | SL placed **with the ladder at placement time** (price precomputable from known rung prices/qtys); TP placed on first rung fill and re-placed on each deeper fill; unfilled rungs cancelled **only at exit/deadline** | Framework mandate; see `05_strategy_4_1a.md` §2 for the full lifecycle and its consequences. |
 | **R12 — exit-reason vocabulary** | 4-value enum (`TP_HIT`, `SL_HIT`, `DEADLINE`, `MARKET_EXIT`) | full registry §10.1/§10.2 | `MARKET_EXIT` was ambiguous (timed? deadline? flatten?); every path now has exactly one enum value. |

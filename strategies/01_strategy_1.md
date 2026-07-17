@@ -60,7 +60,7 @@ NET_PNL     = DELTA_PNL + FUNDING_PNL − FEES
 | `entry_offset_seconds` | `entryOffsetSeconds` | seconds | **3** | 5 | bound ≥ 2 |
 | `exit_offset_seconds` | `exitOffsetSeconds` | seconds | **6** | 6 | bound **> 5** (R2); source live was 4 — superseded |
 | — | `amountUsd` | USD | 10 | 20 | |
-| — | `leverage` | int | 5 (**OKX: 4**) | 4 | margin only, never a P&L multiplier |
+| — | `leverage` | int | 5 (per-exchange delta may override, e.g. 4) | 4 | margin only, never a P&L multiplier |
 | — | `taker_fee_pct` *(exchange profile)* | percent | 0.05 | 0.05 | per-exchange |
 
 `exit_offset_seconds` is the parameter whose live history (4 s) violates the new bound — configs must be migrated, not aliased.

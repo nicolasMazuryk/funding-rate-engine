@@ -15,7 +15,7 @@ Identical to S1/S1-WS — `00_globals.md` §G-L, no deltas.
 
 | # | Time (rel.) | Action | Order / event | Price formula | Cancel/expiry |
 |---|---|---|---|---|---|
-| 1 | `T_settle − entryOffsetSeconds` | decide entry; record `anchorPrice` = reference price at decision time | BUY MARKET via **WS adapter** (mandatory; OKX-only REST fallback) | best ask | — |
+| 1 | `T_settle − entryOffsetSeconds` | decide entry; record `anchorPrice` = reference price at decision time | BUY MARKET via **WS adapter** (mandatory; REST fallback only where the exchange profile enables it) | best ask | — |
 | 2 | on entry fill (`P_entry`) | place stop-loss, active immediately | SELL STOP-MARKET reduce-only | `P_SL = P_entry × (1 − |F| × slMultiplier / 100)` | cancelled on TP/deadline exit |
 | 3 | on funding gate open (WS `funding_fee` event; REST poll safety net; fallback at `T_settle + fundingFeeTimeoutSeconds`) | **arm the retracement tracker** | — | — | — |
 | 4 | while tracking (1 s price poll) | maintain running `P_low` (lowest since arming); on each new low: cancel previous TP, re-place | SELL LIMIT reduce-only | `P_target = P_low + (anchorPrice − P_low) × retracementPct` | throttle: ≤ 1 re-place per second |
