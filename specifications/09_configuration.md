@@ -1,9 +1,9 @@
 # Configuration — Env, YAML, Validation, Startup
 
-**Document:** `09_configuration.md` · includes `00_globals.md` by reference (parameter registry §10.2, bounds §11.1, unit guards §11.2)
+**Document:** `09_configuration.md` · includes `00_globals.md` by reference (parameter registry §8.2, bounds §9.1, unit guards §9.2)
 **Principle:** *fail loud, fail early* — every config value is validated with **Zod** at startup; any violation aborts the process **before any exchange call**.
 
-**Conclusion first.** Two config sources only: **`.env`** for secrets and environment wiring, **YAML** for everything else. One canonical schema drives validation. Strategy parameters are **not** redefined here — their names, units, defaults, and bounds are owned by `00_globals.md` §10.2 / §11. This doc specifies the *shape*, *loading*, and *validation* of an instance's config, and how per-exchange deltas (`00_globals.md` §8) are applied.
+**Conclusion first.** Two config sources only: **`.env`** for secrets and environment wiring, **YAML** for everything else. One canonical schema drives validation. Strategy parameters are **not** redefined here — their names, units, defaults, and bounds are owned by `00_globals.md` §8.2 / §9. This doc specifies the *shape*, *loading*, and *validation* of an instance's config, and how per-exchange deltas (`00_globals.md` §6) are applied.
 
 ---
 
@@ -12,8 +12,8 @@
 | Source | Contents | Committed? |
 |---|---|---|
 | `.env` | API key/secret/passphrase per exchange sub-account, DB URL, log level, instance identity (`EXCHANGE`, `STRATEGY`, `SUBACCOUNT`), `KILL_SWITCH` bootstrap state. | **No** (secrets) |
-| `config/<strategy>-<exchange>.yaml` | Strategy parameters (per `00_globals.md` §10.2), risk limits, sizing, timeouts, symbol allow/deny, feature flags. | Yes |
-| `config/exchanges.yaml` | Per-venue static profile: fees, rate limits, stagger, WS endpoints, per-exchange deltas (§8 of globals). | Yes |
+| `config/<strategy>-<exchange>.yaml` | Strategy parameters (per `00_globals.md` §8.2), risk limits, sizing, timeouts, symbol allow/deny, feature flags. | Yes |
+| `config/exchanges.yaml` | Per-venue static profile: fees, rate limits, stagger, WS endpoints, per-exchange deltas (§6 of globals). | Yes |
 
 **Precedence:** `.env` (identity + secrets) selects which YAML files load; YAML provides behavior. No env var overrides a strategy parameter — parameters live in YAML only, so config is reviewable in version control. One instance loads exactly one strategy YAML and one exchange profile (see `16_fleet_deployment.md`).
 
@@ -44,22 +44,22 @@ Secrets are read once at startup, wrapped, and never logged (Pino redaction on `
 
 ## 3. YAML — strategy instance config (shape)
 
-One file per instance. Parameter **keys, units, and bounds are canonical** (`00_globals.md` §10.2/§11.1) — this is only the container shape.
+One file per instance. Parameter **keys, units, and bounds are canonical** (`00_globals.md` §8.2/§9.1) — this is only the container shape.
 
 ```yaml
 instance:
   exchange: binance
   strategy: strategy_1_ws
-  enabled: true                 # 00_globals §6 — false skips the strategy entirely
+  enabled: true                 # 00_globals §4 — false skips the strategy entirely
 
 sizing:
-  amount_usd: 20                # fixed sizing for now (brief); 00_globals §6
+  amount_usd: 20                # fixed sizing for now (brief); 00_globals §4
   leverage: 5                   # per-exchange delta may override (OKX=4 on S1)
 
-strategy_params:                # validated against the strategy's slice of §10.2
+strategy_params:                # validated against the strategy's slice of §8.2
   negative_funding_threshold_percent: -0.4
   entry_offset_seconds: 3
-  funding_fee_timeout_seconds: 10   # OKX profile overrides to 45 (§8)
+  funding_fee_timeout_seconds: 10   # OKX profile overrides to 45 (§6)
   # ... only the keys this strategy consumes; unknown keys = hard error
 
 risk:                           # see 13_risk_and_failure_modes.md
@@ -74,22 +74,22 @@ symbols:
 ```
 
 **Binding rules**
-- **Unknown key = error, not ignored** (`00_globals.md` §11.2; also enforces the S3a/S2 `stopLossPercent`-vs-`slMultiplier` foot-gun — the wrong key on a strategy is rejected).
-- **Unit guards** run as part of Zod refinement (`take_profit_pct < 0.05` → `unit_suspect_fraction`, `retracement_pct > 1.0` → error, etc., per `00_globals.md` §11.1/§11.2).
-- **Canonical schema is single-source.** Live (camelCase) and backtest (snake_case) schemas are **generated from one schema definition** (`00_globals.md` §11.2); the live loader consumes the camelCase projection. Hand-writing a config in the wrong shape is rejected.
+- **Unknown key = error, not ignored** (`00_globals.md` §9.2; also enforces the S3a/S2 `stopLossPercent`-vs-`slMultiplier` foot-gun — the wrong key on a strategy is rejected).
+- **Unit guards** run as part of Zod refinement (`take_profit_pct < 0.05` → `unit_suspect_fraction`, `retracement_pct > 1.0` → error, etc., per `00_globals.md` §9.1/§9.2).
+- **Canonical schema is single-source.** The live (camelCase) schema is **generated from one schema definition** (`00_globals.md` §9.2). Hand-writing a config in the wrong shape is rejected.
 
 ---
 
 ## 4. YAML — exchange profile (`exchanges.yaml`)
 
-Static, venue-level facts. Consumed by the adapter (`10`) and merged into effective config as **per-exchange deltas** (`00_globals.md` §8).
+Static, venue-level facts. Consumed by the adapter (`10`) and merged into effective config as **per-exchange deltas** (`00_globals.md` §6).
 
 ```yaml
 binance:
   taker_fee_pct: 0.05
   maker_fee_pct: 0.02
   submission_stagger_ms: 100
-  rate_limit_reserve_pct: 10        # 10% reserved for order submit/cancel (§8)
+  rate_limit_reserve_pct: 10        # 10% reserved for order submit/cancel (§6)
   ws:
     public_url: ...
     private_url: ...
@@ -101,9 +101,9 @@ okx:
   submission_stagger_ms: 100
   ws: { ... }
   deltas:
-    funding_fee_timeout_seconds: 45 # 00_globals §8
-    leverage_strategy_1: 4          # 00_globals §8
-    ws_order_rest_fallback: true    # OKX-only REST fallback on WS_TIMEOUT (§8)
+    funding_fee_timeout_seconds: 45 # 00_globals §6
+    leverage_strategy_1: 4          # 00_globals §6
+    ws_order_rest_fallback: true    # OKX-only REST fallback on WS_TIMEOUT (§6)
 ```
 
 Deltas are applied **after** base validation and **re-validated** against the same bounds, so a delta can never push a value out of range silently.
@@ -116,7 +116,7 @@ Deltas are applied **after** base validation and **re-validated** against the sa
 1. load .env (dotenv)            → EnvSchema.parse()      → identity + secrets
 2. load strategy YAML            → StrategyConfigSchema.parse()
 3. load exchanges.yaml[exchange] → ExchangeProfileSchema.parse()
-4. merge per-exchange deltas     → re-validate bounds (00_globals §11.1)
+4. merge per-exchange deltas     → re-validate bounds (00_globals §9.1)
 5. cross-checks (§6)             → EffectiveConfig (frozen)
 6. instrument validation         → 10 §4 (needs a live client; still startup)
    any failure at any step  →  log the exact key + reason  →  process.exit(1)
@@ -130,10 +130,10 @@ Deltas are applied **after** base validation and **re-validated** against the sa
 
 | Check | Rule | Source |
 |---|---|---|
-| Co-run guard | reject `strategy_3a` alongside any LONG strategy; one strategy per container anyway | `00_globals.md` §11.1 |
-| WS-mandatory guard | `strategy_1_ws` / `strategy_2` / `strategy_6` require a WS order adapter → **throw at startup** if the venue/profile can't provide one (OKX REST fallback is the only exception) | `00_globals.md` §8 |
-| Sizing feasibility hint | `amount_usd` ≥ venue min-notional for the cheapest tradable symbol (soft warn; hard per-symbol check at preflight, `12`) | `00_globals.md` §6 |
-| Deadline vs timeout sanity | `deadline_seconds` ≥ `funding_fee_timeout_seconds` where both apply (S2/S6) | bounds §11.1 |
+| Co-run guard | reject `strategy_3a` alongside any LONG strategy; one strategy per container anyway | `00_globals.md` §9.1 |
+| WS-mandatory guard | `strategy_1_ws` / `strategy_2` / `strategy_6` require a WS order adapter → **throw at startup** if the venue/profile can't provide one (OKX REST fallback is the only exception) | `00_globals.md` §6 |
+| Sizing feasibility hint | `amount_usd` ≥ venue min-notional for the cheapest tradable symbol (soft warn; hard per-symbol check at preflight, `12`) | `00_globals.md` §4 |
+| Deadline vs timeout sanity | `deadline_seconds` ≥ `funding_fee_timeout_seconds` where both apply (S2/S6) | bounds §9.1 |
 | Secret presence | required keys for the selected exchange are present and non-empty | this doc |
 
 ---
@@ -146,6 +146,6 @@ Deltas are applied **after** base validation and **re-validated** against the sa
 
 ---
 
-## 8. Parity note
+## 8. Single-schema guarantee
 
-The backtester loads the **snake_case** projection of the same canonical schema. This document governs the **live (camelCase)** projection. Because both derive from one source (`00_globals.md` §11.2), a parameter can never mean one thing in backtest and another live — the property the whole unit-guard regime exists to protect.
+This document governs the **live (camelCase)** schema, generated from the one canonical schema definition (`00_globals.md` §9.2). There is only one runtime consumer of strategy parameters, so a parameter has exactly one meaning everywhere it is used — the property the unit-guard regime exists to protect.

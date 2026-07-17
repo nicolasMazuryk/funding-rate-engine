@@ -3,7 +3,7 @@
 **Document:** `08_system_overview.md` · entry point for the system spec set (`08`–`17`) · includes `00_globals.md` by reference
 **Scope:** everything the live end-to-end trading system needs *around* the strategy logic. Strategy behavior itself is **not** re-specified here — it lives in `01_strategy_1.md` … `07_strategy_6.md` and is referenced, never duplicated.
 
-**Conclusion first.** The system is a single **event-driven** engine per running instance: one exchange, one strategy, one sub-account (§Fleet, `16_fleet_deployment.md`). Adapters sit at the edges and turn venue I/O into a typed event stream; a deterministic **strategy runtime** consumes that stream and emits **intents**; an execution layer turns intents into orders and account-state changes. The same runtime core is shared with the backtester (`00_globals.md`: "one spec, two implementations") — only the edges differ (live adapters vs historical replay). Keep the core pure; keep the mess at the edges.
+**Conclusion first.** The system is a single **event-driven** engine per running instance: one exchange, one strategy, one sub-account (§Fleet, `16_fleet_deployment.md`). Adapters sit at the edges and turn venue I/O into a typed event stream; a deterministic **strategy runtime** consumes that stream and emits **intents**; an execution layer turns intents into orders and account-state changes. Keep the core pure; keep the mess at the edges.
 
 ---
 
@@ -22,7 +22,7 @@
 | `16_fleet_deployment.md` | Sub-accounts, 30 isolated instances (5×6), Docker, one-strategy-per-container. |
 | `17_testing.md` | Unit, integration (exchanges), end-to-end, Vitest. |
 
-Strategy files (`01`–`07`) and `00_globals.md` are the source of truth for strategy behavior, exit-reason/error-code registries (`00_globals.md` §12), parameter registry (§10.2), guards (§9), and safety mechanisms (§7). This set never contradicts them.
+Strategy files (`01`–`07`) and `00_globals.md` are the source of truth for strategy behavior, exit-reason/error-code registries (`00_globals.md` §10), parameter registry (§8.2), guards (§7), and safety mechanisms (§5). This set never contradicts them.
 
 ---
 
@@ -58,13 +58,13 @@ Strategy files (`01`–`07`) and `00_globals.md` are the source of truth for str
             └─────────────────────────────────────────────┘
 ```
 
-**Dependency rule:** the core depends only on interfaces (ports). Adapters, persistence, and risk implement or observe those ports. The core imports no exchange library, no `pg`, no `ccxt`. This is what makes the runtime testable in isolation and reusable by the backtester.
+**Dependency rule:** the core depends only on interfaces (ports). Adapters, persistence, and risk implement or observe those ports. The core imports no exchange library, no `pg`, no `ccxt`. This is what makes the runtime testable in isolation.
 
 ---
 
 ## 4. The event stream (the spine)
 
-A single in-process typed event bus. Every input to the core is one of these events; every output is an intent/command. Backtest replays the same event types from history; live produces them from adapters.
+A single in-process typed event bus. Every input to the core is one of these events, produced by the exchange adapters; every output is an intent/command.
 
 | Event | Producer | Consumers |
 |---|---|---|
@@ -85,7 +85,7 @@ A single in-process typed event bus. Every input to the core is one of these eve
 
 | Pattern | Where | Why |
 |---|---|---|
-| **Ports & Adapters (Hexagonal)** | core ↔ edges boundary | keeps the runtime pure & backtest-shareable |
+| **Ports & Adapters (Hexagonal)** | core ↔ edges boundary | keeps the runtime pure and easy to test in isolation |
 | **Adapter + Factory** | one `ExchangeAdapter` interface, one factory per venue | six venues behind one contract; add a venue = add one adapter |
 | **Strategy** | strategy modules `01`–`07` | already the shape of the strategy set |
 | **Finite State Machine (shared engine)** | intent lifecycle (`12`) and order lifecycle (`11`) | one tiny FSM utility, two state tables — DRY |
@@ -126,7 +126,7 @@ src/
   core/                 # PURE — no I/O imports
     runtime/            # scheduler, opportunity finder, preflight, cost model  (12)
     intent/             # intent FSM + exit-policy dispatch                     (12)
-    strategies/         # 01..07 strategy modules (shared with backtest)
+    strategies/         # 01..07 strategy modules
     events/             # event types + bus interface                          (08 §4)
     ports/              # ExchangeAdapter, Repo, Clock, RiskGate interfaces
   adapters/             # IMPURE — implements ports
@@ -146,7 +146,7 @@ test/                   # unit / integration / e2e                             (
 
 ```
 HH:58:00  Timer → opportunity finder scans predicted funding for enabled strategy's
-          threshold (00_globals §9 guards) → shortlist symbols.
+          threshold (00_globals §7 guards) → shortlist symbols.
 HH:59:5x  For each candidate at T_settle − entryOffsetSeconds: preflight
           (balance, precision, min-notional, risk, kill switch) → build Intent.
           Intent FSM: SELECTED → SUBMITTING_ENTRY.
@@ -154,8 +154,8 @@ HH:59:5x  For each candidate at T_settle − entryOffsetSeconds: preflight
           → Intent: ENTRY_FILLED → MONITORING. Position tracker + funding tracker update.
 HH:00:0x  Strategy exit policy (per 01..07) manages TP/SL/deadline or funding-fee gate,
           driven by MarketTick / FundingFeeAccrued events.
-          Exit fires → Intent: EXITING → CLOSED with exit_reason (00_globals §12.1).
-after     Post-exit sweep (00_globals §7.2) → accounting reconciles fills, funding, P&L (15).
+          Exit fires → Intent: EXITING → CLOSED with exit_reason (00_globals §10.1).
+after     Post-exit sweep (00_globals §5.2) → accounting reconciles fills, funding, P&L (15).
 ```
 
 Every transition is persisted (WAL, `14`) before the side effect, so a crash resumes deterministically.
@@ -164,4 +164,4 @@ Every transition is persisted (WAL, `14`) before the side effect, so a crash res
 
 ## 9. What is explicitly out of scope here
 
-Backtester internals (owned by `00_globals.md` + strategy §6 sections), the strategies' own entry/exit math, and the backtest simulation rules. This set specifies the **live** system that runs the same strategy modules against real venues.
+The strategies' own selection/entry/exit math (owned by `00_globals.md` and `01_strategy_1.md` … `07_strategy_6.md`). This set specifies the **live** system that runs those strategy modules against real venues.

@@ -41,11 +41,11 @@ Typed schema, migrations under version control. Indicative tables (one DB per in
 | `fills` | individual fills with price, qty, fee class, ts |
 | `positions` | tracked position snapshots (reconciled vs REST) |
 | `funding_events` | `FundingFeeAccrued` records + settled amounts (`11` §9) |
-| `pnl` | per-intent decomposition: `delta_pnl`, `funding_pnl`, `fee_cost`, `net_pnl` (`00_globals.md` §10.3) |
+| `pnl` | per-intent decomposition: `delta_pnl`, `funding_pnl`, `fee_cost`, `net_pnl` (`00_globals.md` §8.3) |
 | `kill_switch` | current operational state (`13`) |
 | `reconciliation` | system↔exchange diffs and resolutions (`15`) |
 
-Output variables per trade follow `00_globals.md` §10.3 so live rows are directly comparable to backtest output (parity).
+Output variables per trade follow the canonical registry in `00_globals.md` §8.3, so every trade row is comparable across strategies, exchanges, and instances.
 
 ---
 

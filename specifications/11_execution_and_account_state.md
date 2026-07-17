@@ -3,7 +3,7 @@
 **Document:** `11_execution_and_account_state.md` · includes `00_globals.md` by reference
 **Covers:** order management (WS-first, REST fallback), the order FSM, idempotency, account setup (leverage/margin/position mode), precision & min-limit enforcement, sizing/denomination, private WS streams (orders, positions, balances, funding-fee), and position + funding-fee tracking.
 
-**Conclusion first.** This is the **write + account-state** layer between intents (`12`) and the venue. Orders are placed and cancelled **over WebSocket**, falling back to REST only on WS failure (OKX being the sanctioned WS-order REST fallback, `00_globals.md` §8). Every order carries a `clientOrderId` for idempotency. Account plumbing — one-way position mode, isolated margin, leverage — is set **once in advance**, never mid-trade. Positions and funding are tracked from private WS events with REST as ground truth.
+**Conclusion first.** This is the **write + account-state** layer between intents (`12`) and the venue. Orders are placed and cancelled **over WebSocket**, falling back to REST only on WS failure (OKX being the sanctioned WS-order REST fallback, `00_globals.md` §6). Every order carries a `clientOrderId` for idempotency. Account plumbing — one-way position mode, isolated margin, leverage — is set **once in advance**, never mid-trade. Positions and funding are tracked from private WS events with REST as ground truth.
 
 ---
 
@@ -15,22 +15,22 @@ Before the first intent, per symbol that may trade:
 |---|---|---|
 | Position mode | **one-way** (no hedge) | at startup / first use |
 | Margin mode | **isolated** | at startup / first use |
-| Leverage | `config.leverage` (per-exchange delta may apply, `00_globals.md` §8) | at startup / first use |
+| Leverage | `config.leverage` (per-exchange delta may apply, `00_globals.md` §6) | at startup / first use |
 
-`setLeverage` failure is a **hard reject** (`00_globals.md` §6) — the strategy does not run on a symbol whose leverage/mode couldn't be set. Leverage posts margin only; it never scales notional or P&L (`00_globals.md` §6). These calls are idempotent on the venue; the adapter records the applied state to avoid redundant calls.
+`setLeverage` failure is a **hard reject** (`00_globals.md` §4) — the strategy does not run on a symbol whose leverage/mode couldn't be set. Leverage posts margin only; it never scales notional or P&L (`00_globals.md` §4). These calls are idempotent on the venue; the adapter records the applied state to avoid redundant calls.
 
 ---
 
 ## 2. Order request & sizing
 
 ```
-qty = amountUsd / price / contractSize          # 00_globals §6
+qty = amountUsd / price / contractSize          # 00_globals §4
 qty = floor(qty, amountPrecision)               # lot step
 price = round(price, pricePrecision)            # limit/stop prices
 ```
 
 - **Denomination** handled in the adapter (`10` §4): internal math is base-unit; the venue multiple (e.g. `1000PEPE`) is applied only at the API boundary.
-- **Fixed sizing** for now: `amountUsd = 20` (brief; `00_globals.md` §6). Ladders (S4.1a) split `amountUsd` across rungs by largest-remainder over the lot step (`00_globals.md` §G-R) — sub-min-notional rungs are dropped.
+- **Fixed sizing** for now: `amountUsd = 20` (brief; `00_globals.md` §4). Ladders (S4.1a) split `amountUsd` across rungs by largest-remainder over the lot step (`00_globals.md` §G-R) — sub-min-notional rungs are dropped.
 
 ---
 
@@ -44,9 +44,9 @@ Every order is checked against the instrument (`10` §4) **before submission**:
 | Lot step | floor to `amountPrecision` | floor; if result 0 → infeasible |
 | Min notional (`minCost`) | `qty × price ≥ minNotional` | **skip symbol** (`00_globals.md` §G-R) |
 | Min qty | `qty ≥ minQty` | skip symbol |
-| Reduce-only sanity | exit qty ≤ tracked position qty | cap (`00_globals.md` §4 reduce-only) |
+| Reduce-only sanity | exit qty ≤ tracked position qty | cap, engine-enforced |
 
-Feasibility is enforced identically here (live) and in the backtest simulation rules (`00_globals.md` §4). A symbol failing min-notional at the **top/only** rung is skipped entirely (ladder rule, `00_globals.md` §G-R).
+A symbol failing min-notional at the **top/only** rung is skipped entirely (ladder rule, `00_globals.md` §G-R).
 
 ---
 
@@ -62,16 +62,16 @@ Feasibility is enforced identically here (live) and in the backtest simulation r
 
 ```
 place / cancel:
-  try WS order adapter (native lib)                       # 00_globals §8 hot path
+  try WS order adapter (native lib)                       # 00_globals §6 hot path
   on WsTimeout / WS error:
-    OKX      → REST fallback (sanctioned, §8)
+    OKX      → REST fallback (sanctioned, §6)
     others   → bounded retry on WS; then abort the leg → OrderRejected/main_order_failed
   confirm via OrderUpdate event; if no event in window → REST getOrder poll
-             (10 s timeout, ≤ 15 polls, circuit-open on consecutive errors — §8)
+             (10 s timeout, ≤ 15 polls, circuit-open on consecutive errors — §6)
 ```
 
-- **WS-mandatory strategies** (`strategy_1_ws`, `strategy_2`, `strategy_6`) require the WS order adapter and **throw at startup** without one; only OKX may fall back to REST for orders (`00_globals.md` §8).
-- **Submission stagger** per venue (Bybit 150 ms, Binance 100 ms, others 100 ms default; `00_globals.md` §8) serializes multi-order placements (e.g. ladder rungs).
+- **WS-mandatory strategies** (`strategy_1_ws`, `strategy_2`, `strategy_6`) require the WS order adapter and **throw at startup** without one; only OKX may fall back to REST for orders (`00_globals.md` §6).
+- **Submission stagger** per venue (Bybit 150 ms, Binance 100 ms, others 100 ms default; `00_globals.md` §6) serializes multi-order placements (e.g. ladder rungs).
 - **Rate-limit reserve** (`10` §6) guarantees the order lane against market-data starvation.
 
 ---
@@ -100,7 +100,7 @@ FAILED               REJECTED            └──────────▶ EX
 | `EXPIRED` | limit reached `expireAt` unfilled | terminal → `limit_expired` / `ladder_no_fills` |
 | `REJECTED` / `FAILED` | venue rejected / submit threw | terminal → intent error_code |
 
-**Failure modes → error codes** map to `00_globals.md` §12.2 (`limit_expired`, `ladder_no_fills`, and the full S6 entry set `pre_funding_order_failed` … `close_pre_funding_failed`). OCO/sweep semantics: a sibling fill cancels the other leg; the post-exit sweep (`00_globals.md` §7.2) cancels lingering reduce-only orders.
+**Failure modes → error codes** map to `00_globals.md` §10.2 (`limit_expired`, `ladder_no_fills`, and the full S6 entry set `pre_funding_order_failed` … `close_pre_funding_failed`). OCO/sweep semantics: a sibling fill cancels the other leg; the post-exit sweep (`00_globals.md` §5.2) cancels lingering reduce-only orders.
 
 ---
 
@@ -111,11 +111,11 @@ Native private streams push account-state events onto the bus (`08` §4). REST i
 | Stream | Event | Consumers | Ground truth |
 |---|---|---|---|
 | Order / account updates | `OrderUpdate` | order FSM (§6), intent FSM (`12`) | REST `getOrder` (fill-poll, §5) |
-| Funding-fee accrual | `FundingFeeAccrued { symbol, amount, fundingTime }` | S1-WS/S2/S6 funding gate, funding tracker (§9) | REST funding-fee poll (`T_settle+3 s`, 8 s grace, `00_globals.md` §8) + `fundingHistory` |
+| Funding-fee accrual | `FundingFeeAccrued { symbol, amount, fundingTime }` | S1-WS/S2/S6 funding gate, funding tracker (§9) | REST funding-fee poll (`T_settle+3 s`, 8 s grace, `00_globals.md` §6) + `fundingHistory` |
 | Positions | `PositionUpdate { symbol, qty, side, entryPx }` | position tracker (§8), risk (`13`) | REST `getPositions` |
 | Balances | `BalanceUpdate { asset, free, used }` | preflight (`12`), risk (`13`) | REST `getBalance` |
 
-- **Funding-fee event matching:** `fundingTime` must be within **±5 s** of the expected `T_settle` to match an intent (`00_globals.md` §8); a mismatched event inside tolerance is the known tight-tolerance failure mode (`02_strategy_1_ws.md` §3).
+- **Funding-fee event matching:** `fundingTime` must be within **±5 s** of the expected `T_settle` to match an intent (`00_globals.md` §6); a mismatched event inside tolerance is the known tight-tolerance failure mode (`02_strategy_1_ws.md` §3).
 - **Reconnect/gap:** on reconnect, a REST snapshot re-primes positions/balances/open-orders before resuming stream consumption — no silent state drift.
 
 ---
@@ -124,15 +124,15 @@ Native private streams push account-state events onto the bus (`08` §4). REST i
 
 - Authoritative in-memory position per symbol, updated from `PositionUpdate` and reconciled against REST `getPositions` at key moments: after entry fill, after exit, and on a periodic tick.
 - **REST getPositions is normative ground truth** at the post-MAIN-fill confirmation for S6 (`07_strategy_6.md` §2, now spec) and for exit sizing; on REST failure the engine falls back to tracked fills with a warning (as S6 §2 specifies).
-- Net position for reversal strategies (S6): `mainVolume − preFundingVolume` (`07_strategy_6.md`). Reduce-only exits are capped to tracked qty (`00_globals.md` §4).
-- **Orphan detection:** a venue position with no owning intent (crash/desync) triggers orphan auto-flatten (`00_globals.md` §7.3, wired in `13`).
+- Net position for reversal strategies (S6): `mainVolume − preFundingVolume` (`07_strategy_6.md`). Reduce-only exits are capped to tracked qty (§3).
+- **Orphan detection:** a venue position with no owning intent (crash/desync) triggers orphan auto-flatten (`00_globals.md` §5.3, wired in `13`).
 
 ---
 
 ## 9. Funding-fee tracking
 
 - **Real-time accrual:** the `FundingFeeAccrued` event is the live signal that funding actually credited/charged — it opens the funding gate for WS-gated strategies (S1-WS/S2/S6) and stamps the intent's funding leg.
-- **Accrual rule:** funding is booked **iff the position was open at `T_settle`** (fill-time test, `00_globals.md` §5.1); an exit filled before `T_settle` zeros the funding leg. The tracker records `funding_received` (bool) and the settled amount per intent (`00_globals.md` §10.3).
+- **Accrual rule:** funding is booked **iff the position was open at `T_settle`** (fill-time test, `00_globals.md` §3.1); an exit filled before `T_settle` zeros the funding leg. The tracker records `funding_received` (bool) and the settled amount per intent (`00_globals.md` §8.3).
 - **Attribution (S6):** at `T_settle` only the PRE_FUNDING leg exists, so the charge lands there; per-venue ledger labeling is audited during canary (`07_strategy_6.md` §2). The tracker books the conservative default until the audit confirms.
 - **History:** `fundingHistory` (REST) backfills settled amounts for reconciliation and analytics (`15`).
 

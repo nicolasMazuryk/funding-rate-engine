@@ -59,7 +59,7 @@ At `init()`:
 3. Apply optional `symbols.deny` from config (`09` §3).
 4. Build the in-memory `Instrument` registry (§4), keyed by **normalized** symbol.
 
-The filtered set is the universe the opportunity finder (`12`) scans. Loaded **once at startup**; the funding *schedule* per symbol is re-read per event (intervals can change — `00_globals.md` §10.1), but the tradable-instrument set is stable within a run.
+The filtered set is the universe the opportunity finder (`12`) scans. Loaded **once at startup**; the funding *schedule* per symbol is re-read per event (intervals can change — `00_globals.md` §8.1), but the tradable-instrument set is stable within a run.
 
 ---
 
@@ -76,7 +76,7 @@ One `Instrument` per symbol, derived from ccxt market data, validated at startup
 | `minNotional` (`minCost`), `minQty` | exchange minimums | preflight & feasibility (`11`, `12`) |
 | `fundingIntervalHours` | 1 / 2 / 4 / 8 | schedule (re-read per event) |
 
-**Denomination (binding).** Venues expressing price in multiples (e.g. `1000PEPE`) are normalized so all internal math, sizing, and P&L use the **base unit**; the adapter converts to/from the venue's contract/price multiple **only at the API boundary**. `qty = amountUsd / price / contractSize`, floored to `amountPrecision` (`00_globals.md` §6). A normalization or precision mismatch at startup **aborts the process** — a wrong `contractSize` silently mis-sizes every order.
+**Denomination (binding).** Venues expressing price in multiples (e.g. `1000PEPE`) are normalized so all internal math, sizing, and P&L use the **base unit**; the adapter converts to/from the venue's contract/price multiple **only at the API boundary**. `qty = amountUsd / price / contractSize`, floored to `amountPrecision` (`00_globals.md` §4). A normalization or precision mismatch at startup **aborts the process** — a wrong `contractSize` silently mis-sizes every order.
 
 ---
 
@@ -87,7 +87,7 @@ Venue errors (ccxt and native) are mapped to a **small typed set** the core unde
 | Typed error | Trigger (examples) | Handling |
 |---|---|---|
 | `RateLimited` | HTTP 429, venue rate-limit code | back off via rate limiter (§7); retry |
-| `WsTimeout` | no WS ack within window | REST fallback (OKX only for orders, `00_globals.md` §8); else retry/abort |
+| `WsTimeout` | no WS ack within window | REST fallback (OKX only for orders, `00_globals.md` §6); else retry/abort |
 | `OrderRejected` | min-notional, precision, reduce-only violation, margin | surfaced to order FSM (`11`) → intent error_code |
 | `InsufficientBalance` | margin/balance | preflight reject (`12`) / risk event (`13`) |
 | `AuthError` | bad key/permission/IP | **fatal at startup**, fail-loud |
@@ -95,13 +95,13 @@ Venue errors (ccxt and native) are mapped to a **small typed set** the core unde
 | `NotFound` | unknown order/symbol | reconcile via REST ground truth (`11`, `15`) |
 | `VenueUnavailable` | 5xx, maintenance | circuit-open; pause new intents (`13`) |
 
-Mapping tables live per adapter; the union type is shared. Consecutive `NetworkError`/`VenueUnavailable` trip the circuit breaker (`13` §Circuit breakers). Order-specific rejections carry through to the `error_code` registry (`00_globals.md` §12.2).
+Mapping tables live per adapter; the union type is shared. Consecutive `NetworkError`/`VenueUnavailable` trip the circuit breaker (`13` §Circuit breakers). Order-specific rejections carry through to the `error_code` registry (`00_globals.md` §10.2).
 
 ---
 
 ## 6. Rate limiter
 
-Per-exchange token-bucket sized from the venue's published limits (`exchanges.yaml`). Binding rules from `00_globals.md` §8:
+Per-exchange token-bucket sized from the venue's published limits (`exchanges.yaml`). Binding rules from `00_globals.md` §6:
 
 - **Reserve 10%** of each venue's budget exclusively for **order submit/cancel** — market-data polling can never starve the order path.
 - Weighted costs per endpoint (ccxt exposes weights); the limiter accounts weight, not just call count.
@@ -118,10 +118,10 @@ Two public feeds, pushed onto the event bus (`08` §4):
 
 | Stream | Event | Consumers | Fallback |
 |---|---|---|---|
-| **Predicted next funding rate** | `FundingPredicted { symbol, rate, ts }` | opportunity finder (`12`), selection guards (`00_globals.md` §9) | REST `predictedFunding` poll (freshness ≤ 60 s, `00_globals.md` §9) |
+| **Predicted next funding rate** | `FundingPredicted { symbol, rate, ts }` | opportunity finder (`12`), selection guards (`00_globals.md` §7) | REST `predictedFunding` poll (freshness ≤ 60 s, `00_globals.md` §7) |
 | **Last price / trades** | `MarketTick { symbol, price, ts }` | S2 retracement tracker, exit monitors (`11`, `12`) | REST ticker poll |
 
-- **Freshness gate:** a predicted-rate observation older than **60 s** is treated as *no signal*, not a stale trigger (`00_globals.md` §9.2). The adapter timestamps every observation.
+- **Freshness gate:** a predicted-rate observation older than **60 s** is treated as *no signal*, not a stale trigger (`00_globals.md` §7). The adapter timestamps every observation.
 - **Subscription scope:** subscribe only to the filtered perp-USDT universe (§3); for the last-price stream, narrow to the shortlist around each event window to stay well inside rate/bandwidth budgets.
 - **Reconnect:** automatic with exponential backoff; on gap, a REST snapshot re-primes state before resuming. Private streams are covered in `11`.
 
@@ -131,16 +131,16 @@ Two public feeds, pushed onto the event bus (`08` §4):
 
 | Need | Source | Notes |
 |---|---|---|
-| Predicted next rate | public WS (§7) + REST fallback | selection input, live (`00_globals.md` §5.2) |
-| Settled rate | REST / private funding-fee event | accrual truth (`00_globals.md` §5.1/§5.2) |
+| Predicted next rate | public WS (§7) + REST fallback | selection input, live (`00_globals.md` §3.2) |
+| Settled rate | REST / private funding-fee event | accrual truth (`00_globals.md` §3.1/§3.2) |
 | Funding history | REST `fundingHistory` | reconciliation & analytics (`15`); schedule/interval discovery |
-| Funding **schedule** (`T_settle`, interval) | REST per symbol, **re-read per event** | intervals change dynamically (`00_globals.md` §10.1) — never cache as constant |
+| Funding **schedule** (`T_settle`, interval) | REST per symbol, **re-read per event** | intervals change dynamically (`00_globals.md` §8.1) — never cache as constant |
 
-Predicted-vs-settled divergence is a known **named optimism** in backtest (`00_globals.md` §5.2); live simply uses the predicted rate at decision time and books the settled rate on accrual. The funding-fee **accrual event** (real-time credit/charge) is a private stream, specified in `11`.
+Predicted and settled rates can diverge near a threshold (`00_globals.md` §3.2); the engine uses the predicted rate at decision time and books the settled rate on accrual. The funding-fee **accrual event** (real-time credit/charge) is a private stream, specified in `11`.
 
 ---
 
-## 9. Parity & purity notes
+## 9. Purity notes
 
-- The adapter is the **only** impure boundary for exchange I/O. Given the same event stream, the core behaves identically live and in backtest (`08` §3) — the backtester substitutes a historical event source for §7/§8 and a fill simulator for order I/O.
+- The adapter is the **only** impure boundary for exchange I/O; the core consumes only the typed event stream (`08` §3) and never talks to a venue directly.
 - No venue-specific behavior lives in the core: everything venue-shaped is either data (`exchanges.yaml`) or an adapter mapping (§4, §5). This is the DRY guarantee that keeps six venues from becoming six code paths.

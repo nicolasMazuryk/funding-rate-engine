@@ -3,7 +3,7 @@
 **Document:** `16_fleet_deployment.md` · includes `00_globals.md` by reference
 **Covers:** the isolated-instance model, sub-accounts, the 5×6 fleet, Docker packaging, and one-strategy-per-container.
 
-**Conclusion first.** The unit of deployment is **one instance = one strategy × one exchange × one sub-account × one database**. Running 5 strategies on 6 exchanges is **30 isolated instances**, each a container from the *same image* with a different config + secrets. Isolation is the safety model: a fault, a bad config, or a kill-switch flatten affects exactly one sub-account. This falls straight out of the co-run guard (`00_globals.md` §11.1 — one strategy per container) and the per-instance persistence model (`14`).
+**Conclusion first.** The unit of deployment is **one instance = one strategy × one exchange × one sub-account × one database**. Running 5 strategies on 6 exchanges is **30 isolated instances**, each a container from the *same image* with a different config + secrets. Isolation is the safety model: a fault, a bad config, or a kill-switch flatten affects exactly one sub-account. This falls straight out of the co-run guard (`00_globals.md` §9.1 — one strategy per container) and the per-instance persistence model (`14`).
 
 ---
 
@@ -19,7 +19,7 @@
 | Rate-limit budget | the sub-account's own budget (`10` §6) |
 
 **Why isolation (binding rationale):**
-- **Co-run guard** already forbids conflicting strategies in one container (`00_globals.md` §11.1): S3a (short) alongside any long strategy would offset inside the same funding window. One strategy per container removes the whole class.
+- **Co-run guard** already forbids conflicting strategies in one container (`00_globals.md` §9.1): S3a (short) alongside any long strategy would offset inside the same funding window. One strategy per container removes the whole class.
 - **Blast radius:** kill-switch `flatten` (`13` §2) closes only that sub-account; a crash recovers only that DB (`14`).
 - **Rate limits & margin** are per sub-account, so instances never contend (`10` §6).
 - **Attribution** is clean: every trade maps to exactly one (exchange, strategy, sub-account) tuple for analytics (`15`).
@@ -40,7 +40,7 @@ strategy_4_1a   ▪       ▪      ▪      ▪       ▪        ▪
 
 Any subset of the strategy set × the six venues; the illustration is 5×6 = **30 containers**. Each cell is an independent process with its own sub-account, config, DB, and lifecycle. Adding a strategy or a venue adds a row/column of containers — **no code change**, just config + secrets (the adapter and strategy already exist).
 
-**Per-exchange deltas** (`00_globals.md` §8 — e.g. OKX `fundingFeeTimeoutSeconds = 45`, OKX `leverage = 4` on S1, OKX-only WS-order REST fallback) are applied per instance from the exchange profile (`09` §4), so the same strategy behaves correctly on every venue without branching.
+**Per-exchange deltas** (`00_globals.md` §6 — e.g. OKX `fundingFeeTimeoutSeconds = 45`, OKX `leverage = 4` on S1, OKX-only WS-order REST fallback) are applied per instance from the exchange profile (`09` §4), so the same strategy behaves correctly on every venue without branching.
 
 ---
 

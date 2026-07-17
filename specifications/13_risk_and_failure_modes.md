@@ -1,9 +1,9 @@
 # Risk Management & Failure Modes
 
-**Document:** `13_risk_and_failure_modes.md` · includes `00_globals.md` by reference (safety mechanisms §7)
+**Document:** `13_risk_and_failure_modes.md` · includes `00_globals.md` by reference (safety mechanisms §5)
 **Covers:** the risk gate, kill switch, circuit breakers, flatten, and a consolidated failure-mode catalog.
 
-**Conclusion first.** Risk is a **single gate** in preflight (`12` §3) plus a small set of always-on guards that can pause or flatten the instance. The kill switch and orphan/sweep mechanics are already defined in `00_globals.md` §7 — this doc makes them operational for the live engine and adds circuit breakers and the failure catalog. Because each instance is one strategy on one exchange on one sub-account (`16`), blast radius is bounded by construction: the worst case is one flat sub-account.
+**Conclusion first.** Risk is a **single gate** in preflight (`12` §3) plus a small set of always-on guards that can pause or flatten the instance. The kill switch and orphan/sweep mechanics are already defined in `00_globals.md` §5 — this doc makes them operational for the live engine and adds circuit breakers and the failure catalog. Because each instance is one strategy on one exchange on one sub-account (`16`), blast radius is bounded by construction: the worst case is one flat sub-account.
 
 ---
 
@@ -24,13 +24,13 @@ The gate is pure and data-driven — no per-strategy special cases (DRY). With f
 
 ## 2. Kill switch
 
-States and semantics are normative in `00_globals.md` §7.1:
+States and semantics are normative in `00_globals.md` §5.1:
 
 | State | Behavior |
 |---|---|
 | `off` | normal operation |
 | `paused` | `preflight()` rejects **every** new intent with `error_code = kill_switch` before any exchange call; existing positions continue to be managed to their exit |
-| `flatten` | as `paused`, **plus** `flattenAll()` — reduce-only market closes across the instance's positions (`exit_reason = kill_switch_flatten`, `00_globals.md` §12.1) |
+| `flatten` | as `paused`, **plus** `flattenAll()` — reduce-only market closes across the instance's positions (`exit_reason = kill_switch_flatten`, `00_globals.md` §10.1) |
 
 - Bootstrapped from `.env` `KILL_SWITCH` (`09` §2); runtime transitions are operational and **persisted** (`14`) so a restart honors the last state.
 - Engine-internal: `paused` produces **no** exchange-side activity; only `flatten` touches the venue.
@@ -53,16 +53,16 @@ An order-path breaker that opens **during** a live position does **not** abandon
 
 ## 4. Flatten
 
-`flattenAll()` (kill-switch `flatten`, `00_globals.md` §7.1): reduce-only market close of every tracked position on the instance, retried with backoff, using **REST `getPositions` as ground truth** for what actually needs closing (mirrors the S6 abort ladder, `07_strategy_6.md` §2). A position that cannot be flattened after retries is an **orphan** → alert + orphan auto-flatten backstop (§5).
+`flattenAll()` (kill-switch `flatten`, `00_globals.md` §5.1): reduce-only market close of every tracked position on the instance, retried with backoff, using **REST `getPositions` as ground truth** for what actually needs closing (mirrors the S6 abort ladder, `07_strategy_6.md` §2). A position that cannot be flattened after retries is an **orphan** → alert + orphan auto-flatten backstop (§5).
 
 ---
 
 ## 5. Orphan & desync handling
 
-From `00_globals.md` §7.2/§7.3, made operational:
+From `00_globals.md` §5.2/§5.3, made operational:
 
-- **Post-exit sweep** (`sweepReduceOnlyOrders`, §7.2): after every exit, cancel lingering reduce-only orders for the symbol. Expected, not pathological, for `sl_tp_deadline`-family strategies.
-- **Orphan auto-flatten** (§7.3): a venue position with no owning intent (crash/desync, detected via `PositionUpdate` vs intent store, `11` §8) is auto-flattened; a stale reduce-only sweep runs before entry.
+- **Post-exit sweep** (`sweepReduceOnlyOrders`, §5.2): after every exit, cancel lingering reduce-only orders for the symbol. Expected, not pathological, for `sl_tp_deadline`-family strategies.
+- **Orphan auto-flatten** (§5.3): a venue position with no owning intent (crash/desync, detected via `PositionUpdate` vs intent store, `11` §8) is auto-flattened; a stale reduce-only sweep runs before entry.
 - **Ground truth on reconnect:** private-stream reconnect re-primes state from REST before resuming (`11` §7), preventing acting on stale account state.
 
 ---
@@ -74,7 +74,7 @@ From `00_globals.md` §7.2/§7.3, made operational:
 | Kill switch engaged | preflight | reject/flatten | `kill_switch` / `kill_switch_flatten` |
 | Insufficient balance | preflight / venue | reject intent | `error_code` (no position) |
 | Precision / min-notional | preflight (`11` §3) | skip symbol | (no intent) |
-| Entry order reject/fail | order FSM (`11` §6) | terminate | `main_order_*`, submit codes (`00_globals.md` §12.2) |
+| Entry order reject/fail | order FSM (`11` §6) | terminate | `main_order_*`, submit codes (`00_globals.md` §10.2) |
 | Limit never fills | order FSM expiry | cancel, no position | `limit_expired` / `ladder_no_fills` |
 | WS funding event miss (S1-WS/S2/S6) | timeout (`11` §7) | timeout fallback / abort | `funding_fee_timeout` (S1-WS) / `funding_event_timeout` (S6) |
 | PRE_FUNDING not filled (S6) | WS event vs fill (`07_strategy_6.md`) | abort + close | `pre_funding_not_filled` |
@@ -84,7 +84,7 @@ From `00_globals.md` §7.2/§7.3, made operational:
 | Crash mid-intent | WAL replay (`14`) | deterministic recovery | resume/close |
 | Orphan position | position reconcile (§5) | auto-flatten + alert | — |
 
-Every failure has exactly one terminal mapping (no ambiguous states — the reason `00_globals.md` §12 exists). The runtime never silently swallows a failure: it either recovers deterministically or terminates the intent with a code.
+Every failure has exactly one terminal mapping (no ambiguous states — the reason `00_globals.md` §10 exists). The runtime never silently swallows a failure: it either recovers deterministically or terminates the intent with a code.
 
 ---
 
