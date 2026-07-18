@@ -1,4 +1,6 @@
-# Agentic Development Environment Architect for Claude Code
+# Phase 2 — Live Exchange Verification Tiers for the Agentic Development Environment
+
+> **Phase context.** This is Phase 2 of a two-phase setup. **Prerequisites:** Phase 1 (`phase-1-agentic-development-environment.md`) is complete — the repository scaffolding, agent context layer, simulation harness, observability, documentation, vertical slice, and the unit + fixture/fault-injection verification tiers are in place and `npm run verify` is green — **and** the real exchange adapters (`10_exchange_adapters_and_market_data.md`, `11_execution_and_account_state.md`) have been implemented and verified against the Phase 1 simulation harness. Phase 2 adds every deliverable that depends on real exchange integration: fixture capture from real venues, the testnet tier, and capped real-money production runs — plugged into the same `verify` pipeline, command surface, and fixture format scaffolded in Phase 1, without restructuring.
 
 You are a principal engineer specializing in **agentic development environments** — repositories purpose-built so that a coding agent (Claude Code) can execute the full software development lifecycle end-to-end, autonomously, and **prove its own work is correct without a human in the loop**. You produce a coherent, working system — not a description of one.
 
@@ -31,47 +33,69 @@ Node.js / TypeScript (`strict: true`). Backend only. Stack details, libraries, a
 
 - **Coverage is non-negotiable.** The test and verification suite must cover all edge cases and failure modes thoroughly and reliably: every intent/order FSM transition (including illegal ones), crash-recovery from every WAL state, partial fills, one-leg failures, WS silence, REST/WS disagreement, reconciliation drift, kill-switch and circuit-breaker paths.
 - **Real production verification is required.** Simulations and mocks are necessary but not sufficient. The environment must include a workflow for running **real tests against real production exchanges with small amounts of money** to verify everything end-to-end — including edge cases and failure modes that only manifest live (real fills, real funding settlement, real precision rejections, real rate limits, real reconnects). This live-verification tier must be safe by construction: hard-capped notional, isolated sub-accounts, automatic flatten/teardown, and machine-checkable pass/fail so Claude Code can run it and interpret the result autonomously.
-- **Verification is layered.** Fast pure-core unit tests → integration tests against recorded/replayed venue fixtures and deterministic fault injection → sandboxed/testnet where usable → capped real-money production runs. Each layer is runnable by the agent with a single command and yields unambiguous, structured output.
+- **Verification is layered.** Fast pure-core unit tests → integration tests against recorded/replayed venue fixtures and deterministic fault injection → sandboxed/testnet where usable → capped real-money production runs. Each layer is runnable by the agent with a single command and yields unambiguous, structured output. *(The first two tiers exist from Phase 1; Phase 2 delivers the sandboxed/testnet and capped real-money tiers.)*
 
 ## MISSION
 
-Set up the complete development environment and autonomy system for the project specified in `docs/specs/` (a live crypto funding-rate trading engine — Node.js/TypeScript, backend only).
+Complete the verification system for the project specified in `docs/specs/` (a live crypto funding-rate trading engine — Node.js/TypeScript, backend only) by adding the live-exchange verification tiers to the environment built in Phase 1.
 
-You are **not** implementing the trading strategies. You are building the **machine that lets Claude Code implement them safely and verifiably**, plus a thin but real vertical slice that proves the machine works end-to-end.
+You are **not** implementing the trading strategies. You are building the **machine that lets Claude Code implement them safely and verifiably**.
 
 ## Your task
 
-Set up the development environment for the Claude Code coding agent for the project below, and build a system in which Claude Code can:
+Extend the Phase 1 environment so that Claude Code can verify its own results through the full layered verification described above, culminating in capped real-money production tests, with every check executable and interpretable by the agent itself. Deliver the following:
 
-1. **Work autonomously end-to-end** — plan, implement, test, and iterate across the full SDLC with everything it needs available in-repo (specs, memory, commands, tooling, fixtures).
-2. **Verify its own results successfully** — through the layered verification described above, culminating in capped real-money production tests, with every check executable and interpretable by the agent itself.
-3. **Operate at maximum effectiveness** — the environment structures the work (task decomposition, spec navigation, feedback loops, guardrails) so the agent's capacity is spent on the problem, not on fighting the repo.
+### 1. Fixture capture tooling
 
-Deliver the environment itself, organized around the following deliverables:
+- Fixture capture tooling: a script that records real venue responses into fixtures so tests stay realistic without staying online. Captured fixtures must drop into the fixture format and fixture/fault-injection integration tier established in Phase 1 unchanged.
 
-### 1. Repository scaffolding & tooling
+### 2. Testnet tier
 
-Repository structure, scripts, and developer tooling per the project layout in the spec — everything wired so the agent (and CI) can run every check with a single command each.
+- Sandboxed/testnet verification where usable — runnable by the agent with a single command, yielding unambiguous, structured, machine-readable output. Remember: testnets behave nothing like production; this tier supplements, never replaces, the capped real-money tier.
 
-### 2. Agent context layer — Claude Code configuration
+### 3. Capped real-money production tier
 
-- **`CLAUDE.md` (root)** — project memory: architecture rules, spec navigation, commands, conventions, and the agent workflow.
-- **Nested `CLAUDE.md`** in `src/core/`, `src/adapters/`, and `test/` — local rules only relevant there (e.g. purity constraints in `core/`, venue-quirk conventions in `adapters/`, tier definitions in `test/`).
-- **`.claude/settings.json`** — permissions, allowed tools, and sandbox configuration.
-- **`.claude/agents/`** — subagent definitions where specialization pays off.
-- **Hooks** — automatic gates around agent actions (e.g. run typecheck/lint/tests on edit.
-- **Skills** and **custom slash commands** — reusable workflows the agent invokes (verify, replay, capture fixtures, run live tier, etc.).
+- A workflow for running **real tests against real production exchanges with small amounts of money** to verify everything end-to-end — including edge cases and failure modes that only manifest live (real fills, real funding settlement, real precision rejections, real rate limits, real reconnects).
+- This live-verification tier must be safe by construction: hard-capped notional, isolated sub-accounts, automatic flatten/teardown, and machine-checkable pass/fail so Claude Code can run it and interpret the result autonomously.
 
-### 3. The verification loop (the heart of this task)
+### 4. Agent context layer — additions
 
-The layered verification harnesses described in **The stakes**, implemented: unit → fixture/fault-injection integration → testnet where usable → capped real-money production runs. A single `npm run verify` (and per-tier commands) with unambiguous, structured, machine-readable output; CI gates mirror the same commands so local and CI verification are identical.
+- **Skills** and **custom slash commands** for the new workflows the agent invokes: capture fixtures, run live tier.
+- Updates to `CLAUDE.md` (root and nested, e.g. tier definitions in `test/`) and `.claude/settings.json` permissions/sandbox configuration as required by the new tiers — credentials handling, network access, and guardrails so the agent cannot exceed the live tier's safety caps.
 
-### 7. Working documentation
+### 5. The verification loop — completion
+
+- The layered verification harnesses described in **The stakes**, implemented: unit → fixture/fault-injection integration → testnet where usable → capped real-money production runs. A single `npm run verify` (and per-tier commands) with unambiguous, structured, machine-readable output; CI gates mirror the same commands so local and CI verification are identical.
+- Wire the new tiers into the single `npm run verify` (and per-tier commands) with unambiguous, structured, machine-readable output; CI gates mirror the same commands so local and CI verification are identical.
+- Update `docs/testing-strategy.md` — the test pyramid, what each tier proves, when to add which — so the testnet and real-money tiers are documented as implemented, not planned.
+
+### 6. Determinism and simulation harness
+
+Build a **simulated exchange + simulated clock** the agent can develop against with zero credentials:
+
+- Virtual time: advance to `HH:58`, `T_settle`, deadlines instantly; no `setTimeout` in tests.
+- A fake venue that implements `ExchangeAdapter`, emits realistic WS event sequences, and can be told to misbehave: partial fills, rejects, reduce-only violations, WS disconnect mid-order, duplicate `OrderUpdate`, out-of-order events, precision rejections, rate-limit 429s, funding-fee arriving late.
+- Scenario files (YAML or TS) so failure modes from `13_risk_and_failure_modes.md` become **executable test cases** rather than prose.
+- Fixture capture tooling: a script that records real venue responses into fixtures so tests stay realistic without staying online.
+
+### 7. Observability the agent can read
+
+- Structured trace of every event → intent transition, written in a form the replay tests consume — logs and golden traces should be the **same artifact**, so debugging a failure and writing a regression test are one action.
+- A `scripts/replay.ts` that takes a WAL or log file and re-runs it through the core, printing a diff against expected. This is how the agent debugs without a live venue.
+
+### 8. Updated Working documentation
 
 - `docs/architecture.md` — the layer rules and *why*, mapped to enforcement.
 - `docs/testing-strategy.md` — the test pyramid, what each tier proves, when to add which.
 - `docs/agent-workflow.md` — the loop the agent follows: read spec → plan → write failing test → implement → `verify` → self-review against the architecture rules → commit with a conventional message.
 
+### 9. Proof it works — the vertical slice
+
+Implement one thin end-to-end path so the whole apparatus is demonstrated, not just described:
+
+`Timer(HH:58)` → opportunity finder over a fake `FundingPredicted` stream → preflight → intent `SELECTED → SUBMITTING_ENTRY` → fake adapter fill → `ENTRY_FILLED → MONITORING` → deadline exit → `CLOSED` with a valid `exit_reason` → WAL entries → Postgres persistence → reconciliation stub.
+
+Covered by: unit tests, a golden replay test, a crash-recovery test at two states, and a Postgres integration test. `npm run verify` green.
 
 ---
 
@@ -210,7 +234,7 @@ src/
     ports/              # ExchangeAdapter, Repo, Clock, RiskGate interfaces
   adapters/             # IMPURE — implements ports
     exchanges/<venue>/  # ccxt + native client, WS streams, error mapping      (10, 11)
-    persistence/        # Drizzle repos, WAL                                    (14)
+  persistence/          # Drizzle repos, WAL                                    (14)
   execution/            # order manager, position tracker, funding tracker      (11)
   risk/                 # kill switch, breakers, flatten                        (13)
   accounting/           # reconciliation, P&L, analytics                        (15)
