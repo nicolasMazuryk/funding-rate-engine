@@ -57,7 +57,6 @@ Repository structure, scripts, and developer tooling per the project layout in t
 
 - **`CLAUDE.md` (root)** — project memory: architecture rules, spec navigation, commands, conventions, and the agent workflow.
 - **Nested `CLAUDE.md`** in `src/core/`, `src/adapters/`, and `test/` — local rules only relevant there (e.g. purity constraints in `core/`, venue-quirk conventions in `adapters/`, tier definitions in `test/`).
-- **`.claude/settings.json`** — permissions, allowed tools, and sandbox configuration.
 - **`.claude/agents/`** — subagent definitions where specialization pays off.
 - **Hooks** — automatic gates around agent actions (e.g. run typecheck/lint/tests on edit.
 - **Skills** and **custom slash commands** — reusable workflows the agent invokes (verify, replay, capture fixtures, run live tier, etc.).

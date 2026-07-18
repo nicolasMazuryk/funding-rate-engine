@@ -4,8 +4,8 @@ One row per task. Agents update this file only (see `docs/plan/EXECUTION.md`). S
 
 | ID | Task | Status | Notes |
 |---|---|---|---|
-| 0010 | repo-scaffold-and-verify | todo | |
-| 0020 | agent-context-layer | todo | |
+| 0010 | repo-scaffold-and-verify | done | 2026-07-18: layout uses `src/persistence/` (task file) not spec 08 §7 `src/adapters/persistence/`, per user decision. Purity-boundary rule deferred to 0030. No product deps installed. 2026-07-18 (revision): Biome supersession of ESLint+Prettier recorded in ROADMAP §3 A2 (single source of truth); added `.nvmrc` (Node 24.18.0 LTS) and `npm start`; bumped typescript/vitest/@biomejs/biome to latest. |
+| 0020 | agent-context-layer | done | 2026-07-18: added root `CLAUDE.md`, `docs/architecture.md`, `docs/agent-workflow.md`. CLAUDE.md documents only existing package.json scripts. Nested CLAUDE.md files + hooks/skills + `docs/testing-strategy.md` deferred (0030/0160/0180/0190). Recorded Biome supersession in ROADMAP §3 A2 (single source of truth) and trimmed the duplicate note from 0010 above — plan-doc edit beyond STATUS-only convention, per explicit user interview decision. |
 | 0030 | core-events-and-ports | todo | |
 | 0040 | fsm-engine | todo | |
 | 0050 | clock-and-scheduler | todo | |

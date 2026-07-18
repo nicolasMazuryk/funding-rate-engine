@@ -1,0 +1,23 @@
+{
+  "name": "funding-drop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "check": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "verify": "npm run typecheck && npm run check && npm run test"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.5.4",
+    "@types/node": "^24.13.3",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.10"
+  }
+}
