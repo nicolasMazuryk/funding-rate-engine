@@ -20,12 +20,8 @@ import type { OrderAck, OrderRequest } from '../../../../src/core/ports/exchange
 import { recoveredFromWal } from '../../../../src/core/runtime/engine.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../../../helpers/build-skeleton-engine.js'
 import { createInMemoryRepo } from '../../../helpers/in-memory-repo.js'
-import { BTC, ETH, SCAN_TS } from '../../../helpers/skeleton-scenario.js'
+import { BTC, DEADLINE_TS, ENTRY_TS, ETH, SCAN_TS, START_MS } from '../../../helpers/skeleton-scenario.js'
 
-const OFFSET_MS = 90_000
-const HOLD_MS = 300_000
-const ENTRY_TS = SCAN_TS + OFFSET_MS
-const DEADLINE_TS = ENTRY_TS + HOLD_MS
 const INTENT_ID = `${BTC.symbol}-${ENTRY_TS}`
 
 let dir: string
@@ -51,8 +47,8 @@ function crash(h: SkeletonHarness): void {
 function driveToEntry(h: SkeletonHarness): void {
   sim.setPrice(BTC.symbol, BTC.price)
   sim.setPrice(ETH.symbol, ETH.price)
-  sim.setPredictedFunding(BTC.symbol, BTC.predicted)
-  sim.setPredictedFunding(ETH.symbol, ETH.predicted)
+  sim.setPredictedFunding(BTC.symbol, BTC.predicted, SCAN_TS)
+  sim.setPredictedFunding(ETH.symbol, ETH.predicted, SCAN_TS)
   h.scheduler.start()
   clock.advanceTo(SCAN_TS)
   clock.advanceTo(ENTRY_TS)
@@ -61,7 +57,7 @@ function driveToEntry(h: SkeletonHarness): void {
 beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'crash-test-'))
   walPath = join(dir, 'instance.wal.jsonl')
-  clock = createVirtualClock(0)
+  clock = createVirtualClock(START_MS)
   bus = createEventBus()
   sim = createSimExchange(clock, bus)
 })

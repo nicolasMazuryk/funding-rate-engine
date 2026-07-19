@@ -21,7 +21,7 @@ import { DEV_INSTANCE } from '../../src/persistence/db/instance.js'
 import { createPgRepo } from '../../src/persistence/db/repo.js'
 import { createForwarder } from '../../src/persistence/wal/forwarder.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../helpers/build-skeleton-engine.js'
-import { runSkeletonScenario, triggeredIntentId } from '../helpers/skeleton-scenario.js'
+import { runSkeletonScenario, START_MS, triggeredIntentId } from '../helpers/skeleton-scenario.js'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://funding:funding@localhost:5432/funding_drop'
 
@@ -74,7 +74,7 @@ afterEach(async () => {
 describe('skeleton end-to-end through Postgres', () => {
   it('persists the intent as CLOSED/timed and forwards its four WAL transitions', async () => {
     const repo = createPgRepo({ pool: newPool(), instance: DEV_INSTANCE })
-    const harness = buildSkeletonEngine({ startMs: 0, walPath, repo })
+    const harness = buildSkeletonEngine({ startMs: START_MS, walPath, repo })
     harnesses.push(harness)
     const forwarder = createForwarder({ wal: harness.wal, pool: newPool(), instance: DEV_INSTANCE })
 

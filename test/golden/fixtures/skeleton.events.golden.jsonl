@@ -1,9 +1,9 @@
-{"rate":-0.5,"symbol":"BTC","ts":0,"type":"FundingPredicted"}
-{"rate":0.01,"symbol":"ETH","ts":0,"type":"FundingPredicted"}
-{"kind":"scan","ts":3480000,"type":"Timer"}
-{"kind":"entry","symbol":"BTC","ts":3570000,"type":"Timer"}
-{"clientOrderId":"BTC-3570000-entry-1","fillPx":60000,"qty":0.01,"status":"FILLED","type":"OrderUpdate"}
+{"rate":-0.35,"symbol":"BTC","ts":28680000,"type":"FundingPredicted"}
+{"rate":0.01,"symbol":"ETH","ts":28680000,"type":"FundingPredicted"}
+{"kind":"scan","ts":28680000,"type":"Timer"}
+{"kind":"entry","symbol":"BTC","ts":28710000,"type":"Timer"}
+{"clientOrderId":"BTC-28710000-entry-1","fillPx":60000,"qty":0.01,"status":"FILLED","type":"OrderUpdate"}
 {"qty":0.01,"side":"long","symbol":"BTC","type":"PositionUpdate"}
-{"intentId":"BTC-3570000","kind":"deadline","ts":3870000,"type":"Timer"}
-{"clientOrderId":"BTC-3570000-exit-1","fillPx":60000,"qty":0.01,"status":"FILLED","type":"OrderUpdate"}
+{"intentId":"BTC-28710000","kind":"deadline","ts":29010000,"type":"Timer"}
+{"clientOrderId":"BTC-28710000-exit-1","fillPx":60000,"qty":0.01,"status":"FILLED","type":"OrderUpdate"}
 {"qty":0,"side":"short","symbol":"BTC","type":"PositionUpdate"}

@@ -35,8 +35,9 @@ import type { Clock } from '../ports/clock.js'
 import type { ExchangeAdapter, Order, Side } from '../ports/exchange-adapter.js'
 import type { Repo } from '../ports/repo.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
-import type { StubStrategy } from '../strategies/stub.js'
-import { findCandidates } from './finder.js'
+import type { RuntimeStrategyConfig, StrategyModule, StrategyRegistry } from '../strategies/registry.js'
+import { type FindCandidatesInput, findCandidates } from './finder.js'
+import { computeFundingSchedule } from './funding-schedule.js'
 import type { Scheduler } from './scheduler.js'
 
 /** Skeleton is long-only (`sim-exchange.ts` accrual convention: longs profit on very-negative funding). */
@@ -52,7 +53,10 @@ export interface EngineDeps {
   readonly exchange: ExchangeAdapter
   readonly wal: TransitionLog
   readonly repo: Repo
-  readonly strategy: StubStrategy
+  /** Strategy dispatch table (Registry pattern, `08` §5) — the engine resolves the active module by `strategyConfig.id`. */
+  readonly registry: StrategyRegistry
+  /** Engine-level runtime config for the active strategy (threshold, direction, offset, hold, qty). */
+  readonly strategyConfig: RuntimeStrategyConfig
   /** Preflight stub: a single kill-switch-style boolean, evaluated before entry (real gate 0140). Defaults to always-pass. */
   readonly preflight?: () => boolean
   /** Reconciliation sink invoked after `CLOSED` (composition logs the diff; no throw on mismatch). */
@@ -166,9 +170,18 @@ const validateTransition = transitionIntent as unknown as (
   payload: IntentTerminalPayload,
 ) => IntentTerminalPayload
 
+/** Resolve the active strategy module or fail loud — a misconfigured id is a startup bug. */
+function resolveModule(registry: StrategyRegistry, id: RuntimeStrategyConfig['id']): StrategyModule {
+  const module = registry.get(id)
+  if (module === undefined) throw new Error(`Engine: no strategy module registered for id '${id}'`)
+  return module
+}
+
 export function createEngine(deps: EngineDeps): Engine {
-  const { bus, clock, scheduler, exchange, wal, repo, strategy } = deps
+  const { bus, clock, scheduler, exchange, wal, repo, registry, strategyConfig } = deps
   const preflight = deps.preflight ?? (() => true)
+  // Fail loud on misconfiguration: an id with no registered module is a startup bug, not a runtime skip.
+  const activeModule = resolveModule(registry, strategyConfig.id)
 
   const intents = new Map<string, IntentRecord>()
   const pendingOrders = new Map<string, PendingOrder>()
@@ -227,8 +240,27 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   function onScan(event: Timer): void {
-    for (const candidate of findCandidates(predicted.values(), strategy)) {
-      scheduler.scheduleEntryTimer(candidate.symbol, event.ts + strategy.config.entryOffsetMs)
+    const nowMs = event.ts
+    const universe = exchange
+      .markets()
+      .filter((m) => m.status === 'trading')
+      .map((m) => m.normalized)
+    const schedule = computeFundingSchedule(
+      universe.map((symbol) => exchange.normalize(symbol)),
+      nowMs,
+    )
+    const input: FindCandidatesInput = {
+      universe,
+      predicted,
+      schedule,
+      threshold: { percent: strategyConfig.thresholdPercent, direction: strategyConfig.direction },
+      nowMs,
+    }
+    for (const candidate of findCandidates(input)) {
+      const trigger = activeModule.select(candidate, strategyConfig)
+      if (trigger === undefined) continue
+      // Entry timer fires `entryOffsetSeconds` before settlement (`00_globals.md` §7).
+      scheduler.scheduleEntryTimer(trigger.symbol, trigger.settleTs - strategyConfig.entryOffsetSeconds * 1000)
     }
   }
 
@@ -236,7 +268,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const symbol = event.symbol
     if (symbol === undefined) return
     const intentId = `${symbol}-${event.ts}`
-    const rec: IntentRecord = { symbol, state: 'SELECTED', entrySide: ENTRY_SIDE, entryQty: strategy.config.entryQty }
+    const rec: IntentRecord = { symbol, state: 'SELECTED', entrySide: ENTRY_SIDE, entryQty: strategyConfig.entryQty }
     intents.set(intentId, rec)
 
     if (!preflight()) {
@@ -289,7 +321,7 @@ export function createEngine(deps: EngineDeps): Engine {
     fillPx: number | undefined,
     fillQty: number | undefined,
   ): void {
-    const deadlineMs = clock.now() + strategy.config.holdMs
+    const deadlineMs = clock.now() + strategyConfig.holdMs
     rec.entryFillPx = fillPx
     rec.entryFillQty = fillQty
     rec.deadlineMs = deadlineMs
@@ -376,7 +408,7 @@ export function createEngine(deps: EngineDeps): Engine {
       symbol: r.symbol,
       state: 'SUBMITTING_ENTRY',
       entrySide: r.entrySide ?? ENTRY_SIDE,
-      entryQty: r.entryQty ?? strategy.config.entryQty,
+      entryQty: r.entryQty ?? strategyConfig.entryQty,
     }
     intents.set(r.intentId, rec)
     const clientOrderId = r.clientOrderId ?? `${r.intentId}-entry-1`
@@ -407,7 +439,7 @@ export function createEngine(deps: EngineDeps): Engine {
       symbol: r.symbol,
       state: 'MONITORING',
       entrySide: r.entrySide ?? ENTRY_SIDE,
-      entryQty: r.entryQty ?? strategy.config.entryQty,
+      entryQty: r.entryQty ?? strategyConfig.entryQty,
       entryFillPx: r.entryFillPx,
       deadlineMs: r.tDeadlineMs,
     }

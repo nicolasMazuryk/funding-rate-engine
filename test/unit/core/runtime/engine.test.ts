@@ -6,14 +6,23 @@ import type { EngineEvent, Timer } from '../../../../src/core/events/types.js'
 import type { ReconciliationRecord } from '../../../../src/core/runtime/engine.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../../../helpers/build-skeleton-engine.js'
 import { createInMemoryRepo, type InMemoryRepo } from '../../../helpers/in-memory-repo.js'
-import { BTC, ETH, runSkeletonScenario, SCAN_TS, triggeredIntentId } from '../../../helpers/skeleton-scenario.js'
+import {
+  BTC,
+  DEADLINE_TS,
+  ENTRY_TS,
+  ETH,
+  runSkeletonScenario,
+  SCAN_TS,
+  START_MS,
+  triggeredIntentId,
+} from '../../../helpers/skeleton-scenario.js'
 
 let dir: string
 let walPath: string
 const harnesses: SkeletonHarness[] = []
 
-function build(opts: Parameters<typeof buildSkeletonEngine>[0]): SkeletonHarness {
-  const h = buildSkeletonEngine(opts)
+function build(opts: Omit<Parameters<typeof buildSkeletonEngine>[0], 'startMs'>): SkeletonHarness {
+  const h = buildSkeletonEngine({ startMs: START_MS, ...opts })
   harnesses.push(h)
   return h
 }
@@ -53,8 +62,8 @@ describe('engine — happy path', () => {
       {
         intentId,
         symbol: BTC.symbol,
-        engineQty: h.strategy.config.entryQty,
-        venueQty: h.strategy.config.entryQty,
+        engineQty: h.strategyConfig.entryQty,
+        venueQty: h.strategyConfig.entryQty,
         match: true,
       },
     ])
@@ -76,7 +85,7 @@ describe('engine — happy path', () => {
     const monitoring = h.wal.readAll().find((r) => r.toState === 'MONITORING')
     expect(monitoring).toBeDefined()
     const monitoringPayload = monitoring?.payload as { tDeadlineMs?: number }
-    expect(monitoringPayload.tDeadlineMs).toBe(SCAN_TS + h.strategy.config.entryOffsetMs + h.strategy.config.holdMs)
+    expect(monitoringPayload.tDeadlineMs).toBe(DEADLINE_TS)
     expect(monitoring?.intentId).toBe(intentId)
   })
 })
@@ -106,11 +115,12 @@ describe('engine — multi-candidate scan', () => {
     const { clock, exchange, scheduler } = h
     exchange.setPrice(BTC.symbol, BTC.price)
     exchange.setPrice(ETH.symbol, ETH.price)
-    exchange.setPredictedFunding(BTC.symbol, -0.4) // less negative
-    exchange.setPredictedFunding(ETH.symbol, -0.9) // more negative → first
+    // Both inside the proximity band around the -0.3 threshold; ETH is more negative → first.
+    exchange.setPredictedFunding(BTC.symbol, -0.35, SCAN_TS) // less negative
+    exchange.setPredictedFunding(ETH.symbol, -0.38, SCAN_TS) // more negative → first
     scheduler.start()
     clock.advanceTo(SCAN_TS)
-    clock.advanceTo(SCAN_TS + h.strategy.config.entryOffsetMs)
+    clock.advanceTo(ENTRY_TS)
 
     const entrySymbols = received
       .filter((e): e is Timer => e.type === 'Timer' && e.kind === 'entry')

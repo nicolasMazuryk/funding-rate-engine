@@ -19,7 +19,7 @@ import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { buildSkeletonEngine } from '../helpers/build-skeleton-engine.js'
-import { runSkeletonScenario } from '../helpers/skeleton-scenario.js'
+import { runSkeletonScenario, START_MS } from '../helpers/skeleton-scenario.js'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const WAL_GOLDEN = join(FIXTURES, 'skeleton.wal.golden.jsonl')
@@ -45,7 +45,7 @@ afterEach(() => {
 function captureTrace(suffix: string): Trace {
   const walPath = join(dir, `skeleton${suffix}.wal.jsonl`)
   const eventsPath = join(dir, `skeleton${suffix}.events.jsonl`)
-  const h = buildSkeletonEngine({ startMs: 0, walPath, eventsPath })
+  const h = buildSkeletonEngine({ startMs: START_MS, walPath, eventsPath })
   runSkeletonScenario(h)
   h.engine.dispose()
   h.wal.close()
