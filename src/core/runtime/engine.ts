@@ -39,6 +39,7 @@ import type { Repo } from '../ports/repo.js'
 import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
 import type { RuntimeStrategyConfig, StrategyModule, StrategyRegistry } from '../strategies/registry.js'
+import { evaluateProfitCondition, type ProfitBreakdown } from './cost-model.js'
 import { type FindCandidatesInput, findCandidates } from './finder.js'
 import { computeFundingSchedule } from './funding-schedule.js'
 import { type PreflightSnapshot, runPreflight } from './preflight.js'
@@ -115,6 +116,8 @@ export interface Engine {
   recover(recovered: readonly RecoveredIntent[]): Promise<void>
   /** Current FSM state of an intent, or `undefined` if unknown to this engine. */
   intentState(intentId: string): IntentState | undefined
+  /** Advisory cost-model breakdown captured at selection (task 0150), or `undefined` if none. */
+  costBreakdown(intentId: string): ProfitBreakdown | undefined
   /** Unsubscribe from the bus (simulated crash: engine stops reacting). */
   dispose(): void
 }
@@ -137,6 +140,8 @@ interface IntentRecord {
   entryFillPx?: number
   entryFillQty?: number
   deadlineMs?: number
+  /** Advisory cost-model breakdown captured at selection (task 0150); in-memory analytics only, never WAL'd. */
+  costBreakdown?: ProfitBreakdown
 }
 
 /** `pendingOrders` value: which intent/leg a `clientOrderId` belongs to. */
@@ -198,6 +203,8 @@ export function createEngine(deps: EngineDeps): Engine {
   const intents = new Map<string, IntentRecord>()
   const pendingOrders = new Map<string, PendingOrder>()
   const predicted = new Map<string, FundingPredicted>()
+  // Advisory cost-model breakdown per symbol, stashed at selection, copied onto the intent at entry (task 0150).
+  const costBySymbol = new Map<string, ProfitBreakdown>()
   // Latest venue state the preflight reads, updated from the event stream.
   let latestBalance: Balance | undefined = deps.initialBalance
   const latestPrice = new Map<string, number>()
@@ -281,6 +288,18 @@ export function createEngine(deps: EngineDeps): Engine {
     for (const candidate of findCandidates(input)) {
       const trigger = activeModule.select(candidate, strategyConfig)
       if (trigger === undefined) continue
+      // Advisory economic gate (task 0150): evaluate NET_PNL condition with the live
+      // funding rate, stash for the intent. Absent fee config ⇒ no evaluation.
+      if (strategyConfig.costFees !== undefined) {
+        costBySymbol.set(
+          trigger.symbol,
+          evaluateProfitCondition(strategyConfig.id, {
+            fundingRatePercent: candidate.ratePercent,
+            fees: strategyConfig.costFees,
+            params: strategyConfig.costParams ?? {},
+          }),
+        )
+      }
       // Entry timer fires `entryOffsetSeconds` before settlement (`00_globals.md` §7).
       scheduler.scheduleEntryTimer(trigger.symbol, trigger.settleTs - strategyConfig.entryOffsetSeconds * 1000)
     }
@@ -314,6 +333,8 @@ export function createEngine(deps: EngineDeps): Engine {
     if (result.kind === 'skip') return
 
     const rec: IntentRecord = { symbol, state: 'SELECTED', entrySide: ENTRY_SIDE, entryQty: strategyConfig.entryQty }
+    const stashedCost = costBySymbol.get(symbol)
+    if (stashedCost !== undefined) rec.costBreakdown = stashedCost
     intents.set(intentId, rec)
 
     if (result.kind === 'reject') {
@@ -511,6 +532,9 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     intentState(intentId: string): IntentState | undefined {
       return intents.get(intentId)?.state
+    },
+    costBreakdown(intentId: string): ProfitBreakdown | undefined {
+      return intents.get(intentId)?.costBreakdown
     },
     dispose(): void {
       unsubscribe()

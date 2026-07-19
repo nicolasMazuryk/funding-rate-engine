@@ -6,6 +6,7 @@
  * preflight, `12`, once instrument data exists).
  */
 
+import { evaluateProfitCondition, type FeeInputs } from '../core/runtime/cost-model.js'
 import type { StrategyId } from './canonical.js'
 import { ConfigParseError } from './errors.js'
 import type { ExchangeProfile } from './exchange-schema.js'
@@ -60,6 +61,38 @@ export function checkDeadlineVsTimeout(
       'deadline_lt_timeout',
     )
   }
+}
+
+/**
+ * Group-L strategies subject to the structural cost gate (`00_globals.md` §11-R10).
+ * Their profit condition (`|F| > FEES`) is fully determined by the configured
+ * threshold + fees, so an uneconomic config is rejectable at load time. Group S/R/D
+ * TP-path economics are also config-deterministic but fail safe at selection
+ * (advisory) instead — no untested arithmetic added here (YAGNI).
+ */
+const STRUCTURAL_COST_STRATEGIES: readonly StrategyId[] = ['s1', 's1-ws', 's2']
+
+/**
+ * Structural cost economics (`00_globals.md` §11-R10; `01_strategy_1.md` §4): a
+ * Group-L `negative_funding_threshold_percent` too shallow to clear round-trip
+ * fees can never net profit regardless of the realized drop — reject at load.
+ * E.g. s1 threshold −0.1 vs taker 0.05% (fees 0.10%): `0.1 <= 0.10` → reject.
+ */
+export function checkStructuralCostEconomics(
+  strategyParams: Readonly<Record<string, number | string>>,
+  strategyId: StrategyId,
+  fees: FeeInputs,
+): void {
+  if (!STRUCTURAL_COST_STRATEGIES.includes(strategyId)) return
+  const threshold = strategyParams.negativeFundingThresholdPercent
+  if (typeof threshold !== 'number') return
+  const breakdown = evaluateProfitCondition(strategyId, { fundingRatePercent: threshold, fees, params: strategyParams })
+  if (breakdown.passes) return
+  throw new ConfigParseError(
+    'strategy_params.negative_funding_threshold_percent',
+    `strategy '${strategyId}' threshold ${threshold}% cannot structurally clear fees (|F|=${Math.abs(threshold)} <= FEES=${breakdown.feeTerm}); 00_globals §11-R10`,
+    'uneconomic_structural_config',
+  )
 }
 
 /**

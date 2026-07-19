@@ -13,7 +13,12 @@ import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import dotenv from 'dotenv'
 import { checkCoRunGuard } from './co-run-guard.js'
-import { checkDeadlineVsTimeout, checkSizingFeasibilityHint, checkWsMandatoryGuard } from './cross-checks.js'
+import {
+  checkDeadlineVsTimeout,
+  checkSizingFeasibilityHint,
+  checkStructuralCostEconomics,
+  checkWsMandatoryGuard,
+} from './cross-checks.js'
 import { deepFreeze } from './deep-freeze.js'
 import { applyExchangeDeltas } from './delta-merge.js'
 import type { EffectiveConfig } from './effective-config.js'
@@ -57,6 +62,10 @@ export function loadEffectiveConfigFromSources(sources: ConfigSources): Effectiv
   checkCoRunGuard([{ strategyId: env.strategy, enabled: parsed.instance.enabled }])
   checkWsMandatoryGuard(env.strategy, profile, merged.wsOrderRestFallback)
   checkDeadlineVsTimeout(merged.strategyParams, env.strategy)
+  checkStructuralCostEconomics(merged.strategyParams, env.strategy, {
+    takerFeePct: profile.takerFeePct,
+    makerFeePct: profile.makerFeePct,
+  })
 
   const warnings = [...parsed.warnings, ...merged.warnings]
   const sizingHint = checkSizingFeasibilityHint(merged.sizing, env.strategy)

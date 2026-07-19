@@ -84,4 +84,28 @@ describe('loadEffectiveConfigFromSources (09_configuration §5)', () => {
     const cfg = loadEffectiveConfigFromSources(sources({ strategyYamlText: tiny }))
     expect(cfg.warnings.some((w) => /feasibility hint/.test(w))).toBe(true)
   })
+
+  it('rejects a Group-L threshold too shallow to clear fees (00_globals §11-R10)', () => {
+    const uneconomic = strategyYaml({
+      strategy: 's1',
+      params: { negative_funding_threshold_percent: -0.1, entry_offset_seconds: 3, exit_offset_seconds: 6 },
+    })
+    try {
+      loadEffectiveConfigFromSources(
+        sources({ envRecord: { ...BASE_ENV, STRATEGY: 's1' }, strategyYamlText: uneconomic }),
+      )
+      throw new Error('expected throw')
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigParseError)
+      expect((e as ConfigParseError).code).toBe('uneconomic_structural_config')
+    }
+  })
+
+  it('loads a Group-L strategy at the default threshold (−0.4 clears fees)', () => {
+    const cfg = loadEffectiveConfigFromSources(
+      sources({ envRecord: { ...BASE_ENV, STRATEGY: 's1' }, strategyYamlText: strategyYaml({ strategy: 's1' }) }),
+    )
+    expect(cfg.strategy).toBe('s1')
+    expect(cfg.strategyParams.negativeFundingThresholdPercent).toBe(-0.4)
+  })
 })

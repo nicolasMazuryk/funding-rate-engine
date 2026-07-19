@@ -11,6 +11,7 @@
  */
 
 import type { StrategyId } from '../../config/canonical.js'
+import type { FeeInputs } from '../runtime/cost-model.js'
 import type { Candidate } from '../runtime/finder.js'
 
 /** Exit-policy family a module uses; only `timed` exists in the skeleton (real policies 0300+). */
@@ -37,6 +38,10 @@ export interface RuntimeStrategyConfig {
   readonly amountUsd: number
   /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */
   readonly leverage: number
+  /** Fee inputs for the advisory cost-model gate (task 0150). Absent ⇒ no evaluation. */
+  readonly costFees?: FeeInputs
+  /** Strategy params the cost model reads (e.g. `tpVariantAMultiplier`, `takeProfitPct`). Absent ⇒ no evaluation. */
+  readonly costParams?: Readonly<Record<string, number | string>>
 }
 
 /** A module's decision to act on a candidate: the symbol and the settlement it entered against. */
