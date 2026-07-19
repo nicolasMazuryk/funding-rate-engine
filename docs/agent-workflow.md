@@ -41,6 +41,22 @@
 
 ---
 
+## Verification Gate (task 0180)
+
+- **`npm run verify` before every commit.** Non-negotiable — see root `CLAUDE.md`
+  "Commands" and `docs/testing-strategy.md`. Use the `verify` skill
+  (`.claude/skills/verify/`) to run and interpret it.
+- **Post-edit hook.** `.claude/settings.json` runs `.claude/hooks/post-edit-check.mjs`
+  after every `Edit`/`Write`/`MultiEdit` — scoped `biome check` on the touched file plus
+  a full `tsc --noEmit` (fast at this codebase's size). This is a fast per-edit signal,
+  not a substitute for `npm run verify`: it never runs the test suite, so a green hook
+  does not mean the repo is done — still run `verify` before committing.
+- **Debugging without a live venue:** use the `replay` skill to diff a recorded trace
+  against the current core, and the `scenario` skill to run one sim fault scenario in
+  isolation. Neither needs credentials.
+
+---
+
 ## Core Principles
 
 - **Simplicity First**: Make every change as simple as possible. Impact minimal code.

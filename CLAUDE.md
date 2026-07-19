@@ -33,9 +33,25 @@ Overall goal and build order: `docs/specs/0000_agentic-development-environment.m
 | `npm run check` | `biome check .` (lint + format check) |
 | `npm run format` | `biome check --write .` (apply lint/format fixes) |
 | `npm run test` | `vitest run` |
+| `npm run test:integration` | `vitest run --config vitest.integration.config.ts` (needs Docker Postgres; not part of `verify`) |
+| `npm run replay -- <trace> [--expect <golden>] [--json]` | replay a recorded trace through the core, no live venue needed (task 0170) |
 | `npm start` | `node src/main.ts` (composition root) |
 
 Do not reference commands that do not exist yet; add each command in the task that creates its tooling.
+
+## Claude Code workflow layer (task 0180)
+
+- **Skills** (`.claude/skills/`): `/verify` (run + interpret `npm run verify`),
+  `/replay` (wrap `npm run replay`, incl. `--json` interpretation), `/scenario` (run one
+  `test/scenarios/**` fault-injection scenario in isolation).
+- **Hook**: `.claude/settings.json` runs `.claude/hooks/post-edit-check.mjs` after every
+  edit — scoped `biome check` + full `tsc --noEmit`, fast feedback, not a `verify`
+  substitute.
+- **Subagents** (`.claude/agents/`): `spec-navigator` (read-only "which spec section
+  governs X" lookup), `test-writer` (writes a failing test first, matching tier
+  conventions, before the implementation exists).
+- Tier pyramid and when to add which test: `docs/testing-strategy.md`. Repo-specific
+  harness conventions: `test/CLAUDE.md`.
 
 ## Core Philosophy
 
