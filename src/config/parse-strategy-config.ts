@@ -9,6 +9,7 @@
 
 import YAML from 'yaml'
 import { type Container, liveKeyFor, paramsFor, type StrategyId } from './canonical.js'
+import { deepFreeze } from './deep-freeze.js'
 import { ConfigParseError } from './errors.js'
 import { SIZING_SCHEMAS, STRATEGY_PARAMS_SCHEMAS, StrategyYamlSchema, zodErrorToConfigError } from './schema.js'
 
@@ -43,14 +44,6 @@ function mapLive(data: unknown, strategyId: StrategyId, container: Container): R
     if (live !== undefined) out[live] = value as number | string
   }
   return out
-}
-
-function deepFreeze<T>(o: T): T {
-  if (o !== null && typeof o === 'object') {
-    for (const v of Object.values(o)) deepFreeze(v)
-    Object.freeze(o)
-  }
-  return o
 }
 
 export function parseStrategyConfig(yamlText: string, strategyId: StrategyId): ParsedStrategyConfig {

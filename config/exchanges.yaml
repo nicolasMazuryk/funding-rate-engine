@@ -1,0 +1,80 @@
+# Per-venue static profiles (09_configuration.md §4).
+# Consumed by the adapters (10) and merged into effective config as per-exchange
+# deltas (00_globals.md §6). Fixed 6-key shape — every venue present, no extras.
+#
+# ws_order_adapter records venue CAPABILITY (08 §6: all six native libs are
+# WS-capable), not "adapter implemented in this repo".
+#
+# WS URLs are best-effort real per-venue endpoints, inert until an adapter reads
+# them (0190 for Binance; 0420–0460 for the rest). Correctable when each adapter
+# is built and its venue team reviews.
+
+binance:
+  taker_fee_pct: 0.05
+  maker_fee_pct: 0.02
+  submission_stagger_ms: 100
+  rate_limit_reserve_pct: 10
+  ws_order_adapter: true
+  ws:
+    public_url: wss://fstream.binance.com/ws
+    private_url: wss://fstream.binance.com/ws
+  deltas: {}
+
+bybit:
+  taker_fee_pct: 0.055
+  maker_fee_pct: 0.02
+  submission_stagger_ms: 150 # 00_globals §6 — Bybit serializes at 150 ms
+  rate_limit_reserve_pct: 10
+  ws_order_adapter: true
+  ws:
+    public_url: wss://stream.bybit.com/v5/public/linear
+    private_url: wss://stream.bybit.com/v5/private
+  deltas: {}
+
+okx:
+  # Keeps the spec's worked §4 example, reshaped into this task's schema.
+  taker_fee_pct: 0.05
+  maker_fee_pct: 0.02
+  submission_stagger_ms: 100
+  rate_limit_reserve_pct: 10
+  ws_order_adapter: true
+  ws:
+    public_url: wss://ws.okx.com:8443/ws/v5/public
+    private_url: wss://ws.okx.com:8443/ws/v5/private
+  deltas:
+    funding_fee_timeout_seconds: 45 # 00_globals §6
+    leverage: { s1: 4 } # 00_globals §6 (spec literal was leverage_strategy_1: 4)
+    ws_order_rest_fallback: true # this venue enables REST fallback on WS_TIMEOUT (§6)
+
+bitget:
+  taker_fee_pct: 0.06
+  maker_fee_pct: 0.02
+  submission_stagger_ms: 100
+  rate_limit_reserve_pct: 10
+  ws_order_adapter: true
+  ws:
+    public_url: wss://ws.bitget.com/v2/ws/public
+    private_url: wss://ws.bitget.com/v2/ws/private
+  deltas: {}
+
+gateio:
+  taker_fee_pct: 0.05
+  maker_fee_pct: 0.02
+  submission_stagger_ms: 100
+  rate_limit_reserve_pct: 10
+  ws_order_adapter: true
+  ws:
+    public_url: wss://fx-ws.gateio.ws/v4/ws/usdt
+    private_url: wss://fx-ws.gateio.ws/v4/ws/usdt
+  deltas: {}
+
+kucoin:
+  taker_fee_pct: 0.06
+  maker_fee_pct: 0.02
+  submission_stagger_ms: 100
+  rate_limit_reserve_pct: 10
+  ws_order_adapter: true
+  ws:
+    public_url: wss://ws-api-futures.kucoin.com/endpoint
+    private_url: wss://ws-api-futures.kucoin.com/endpoint
+  deltas: {}
