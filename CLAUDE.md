@@ -43,6 +43,7 @@ Do not reference commands that do not exist yet; add each command in the task th
 
 - Prefer the simplest solution that works. Less code > clever code.
 - Delete code aggressively. The best code is no code.
+- Avoid overengineering
 
 ## Architecture rules (brief — see `docs/architecture.md` for depth + enforcement)
 
