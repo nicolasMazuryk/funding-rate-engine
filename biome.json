@@ -33,5 +33,40 @@
         "organizeImports": "on"
       }
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["src/core/**"],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "paths": {
+                  "ccxt": "Core is pure (08 §3): no I/O. Depend on a port in src/core/ports/ instead.",
+                  "pg": "Core is pure (08 §3): no DB. Use the Repo port.",
+                  "drizzle-orm": "Core is pure (08 §3): no ORM. Use the Repo port.",
+                  "ws": "Core is pure (08 §3): no sockets. Streams live behind the ExchangeAdapter port.",
+                  "pino": "Core is pure (08 §3): no I/O logger. Pass diagnostics out via ports/return values.",
+                  "fs": "Core is pure (08 §3): no filesystem.",
+                  "net": "Core is pure (08 §3): no sockets.",
+                  "http": "Core is pure (08 §3): no network.",
+                  "node:fs": "Core is pure (08 §3): no filesystem.",
+                  "node:net": "Core is pure (08 §3): no sockets.",
+                  "node:http": "Core is pure (08 §3): no network."
+                },
+                "patterns": [
+                  {
+                    "group": ["**/adapters/**", "**/persistence/**", "**/execution/**"],
+                    "message": "Core is pure (08 §3): must not import impure layers. Depend on a port in src/core/ports/ instead."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
 }
