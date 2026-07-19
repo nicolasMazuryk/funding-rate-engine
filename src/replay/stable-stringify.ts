@@ -1,9 +1,13 @@
 /**
  * Deterministic JSON: recursively sorts object keys so the same value always
- * serializes to the same bytes, regardless of insertion order. Used by the
- * events-log trace writer to keep the golden artifact byte-stable (task 0090;
- * spec 0000 §6 — trace is the replay artifact). `undefined` fields are dropped
- * (they are absent in JSON anyway).
+ * serializes to the same bytes, regardless of insertion order. `undefined`
+ * fields are dropped (absent in JSON anyway).
+ *
+ * The one shared implementation: the config revision hash (`src/config/
+ * revision-hash.ts`) and the trace-file writer (`src/replay/trace-file.ts`)
+ * both import it, converging what used to be two byte-identical copies. It
+ * lives under `src/replay/` (not `src/core/`) so the core-purity Biome rule
+ * stays intact — the core never imports it.
  */
 
 export function stableStringify(value: unknown): string {

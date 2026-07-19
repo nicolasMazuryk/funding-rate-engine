@@ -37,6 +37,18 @@ default run.
 - Faults are **opt-in per scenario** — the sim's happy path (0060) is unchanged, so a
   scenario that scripts no fault behaves exactly like a live-venue happy path.
 
+## Trace fixtures (`test/golden/`)
+
+- **One unified trace file per golden run** — header + `event`s + `transition`s in
+  one JSONL artifact (`skeleton.trace.golden.jsonl`), not separate WAL/event files.
+  Format is documented in `docs/trace-format.md`; it is written by the harness when
+  `buildSkeletonEngine({ tracePath })` is set.
+- The golden test routes the captured trace through the shared `replayTrace`
+  (`src/replay/replay-engine.ts`) — the *same* code path `scripts/replay.ts` runs,
+  so a golden drift and a replay divergence are one failure.
+- Bless a captured trace as a fixture with `npm run replay -- --promote <trace>
+  [--name <name>]`.
+
 ## Determinism rule (load-bearing)
 
 - **Virtual clock only.** No `setTimeout`, no real waits, no `Date.now()` anywhere under

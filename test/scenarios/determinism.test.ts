@@ -7,7 +7,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { stableStringify } from '../helpers/stable-stringify.js'
+import { stableStringify } from '../../src/replay/stable-stringify.js'
 import { fault, placeOrder, scenario, setPrice } from './dsl.js'
 import { runScenario } from './run-scenario.js'
 
