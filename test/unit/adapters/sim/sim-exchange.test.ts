@@ -127,4 +127,78 @@ describe('createSimExchange', () => {
     const _check: ExchangeAdapter = createSimExchange(clock, bus)
     expect(typeof _check.placeOrder).toBe('function')
   })
+
+  // ── 0160 fault-injection mechanics (isolated; scenario tests cover the catalog rows) ──
+
+  it('rests a limit order OPEN and fills it when the mark price crosses', async () => {
+    const { sim, events } = harness()
+    const ack = await sim.placeOrder({
+      symbol: 'BTC',
+      side: 'long',
+      type: 'limit',
+      qty: 0.001,
+      price: 60_000,
+      clientOrderId: 'l1',
+    })
+    expect(ack.accepted).toBe(true)
+    expect(events).toContainEqual({ type: 'OrderUpdate', clientOrderId: 'l1', status: 'OPEN' })
+    expect(await sim.getPositions()).toEqual([]) // not filled yet
+
+    sim.setPrice('BTC', 59_000) // 59_000 ≤ 60_000 ⇒ buy limit crosses
+
+    expect(events).toContainEqual({
+      type: 'OrderUpdate',
+      clientOrderId: 'l1',
+      status: 'FILLED',
+      fillPx: 60_000,
+      qty: 0.001,
+    })
+    expect(await sim.getPositions()).toEqual([{ symbol: 'BTC', side: 'long', qty: 0.001, entryPrice: 60_000 }])
+  })
+
+  it('does not cross a buy limit while the mark stays above it', async () => {
+    const { sim, events } = harness()
+    await sim.placeOrder({ symbol: 'BTC', side: 'long', type: 'limit', qty: 0.001, price: 60_000, clientOrderId: 'l1' })
+    sim.setPrice('BTC', 61_000) // above the limit ⇒ no cross
+    expect(events.some((e) => e.type === 'OrderUpdate' && e.status === 'FILLED')).toBe(false)
+  })
+
+  it('triggers a stop order when the mark rises to it (long stop)', async () => {
+    const { sim, events } = harness()
+    await sim.placeOrder({ symbol: 'BTC', side: 'long', type: 'stop', qty: 0.001, price: 60_000, clientOrderId: 's1' })
+    sim.setPrice('BTC', 60_500) // ≥ stop ⇒ triggers, fills at the current mark
+    expect(events).toContainEqual({
+      type: 'OrderUpdate',
+      clientOrderId: 's1',
+      status: 'FILLED',
+      fillPx: 60_500,
+      qty: 0.001,
+    })
+  })
+
+  it('cancels a resting order and emits CANCELLED', async () => {
+    const { sim, events } = harness()
+    await sim.placeOrder({ symbol: 'BTC', side: 'long', type: 'limit', qty: 0.001, price: 60_000, clientOrderId: 'l1' })
+    await sim.cancelOrder('l1')
+    expect(events).toContainEqual({ type: 'OrderUpdate', clientOrderId: 'l1', status: 'CANCELLED', qty: 0 })
+    // Cancelled: a later crossing no longer fills it.
+    sim.setPrice('BTC', 59_000)
+    expect(events.some((e) => e.type === 'OrderUpdate' && e.status === 'FILLED')).toBe(false)
+  })
+
+  it('throws a typed SimVenueError on scripted call ordinals, then recovers', async () => {
+    const { sim } = harness()
+    sim.scriptRateLimit('getBalance', 'RateLimited', [1])
+    expect(() => sim.getBalance()).toThrow(/RateLimited/)
+    await expect(sim.getBalance()).resolves.toBeDefined() // ordinal 2 passes
+  })
+
+  it('market orders keep the un-validated happy path (no precision/margin regression)', async () => {
+    const { sim } = harness()
+    sim.setPrice('BTC', 30_000)
+    // qty 2 @ 30_000 = 60_000 notional > free 10_000 — a limit would reject on margin;
+    // a market order still fills (validateOrder is resting-only).
+    const ack = await sim.placeOrder(buy({ qty: 2 }))
+    expect(ack.accepted).toBe(true)
+  })
 })

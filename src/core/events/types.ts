@@ -11,7 +11,7 @@
  * (`number`, suffixed `Ts`/`Time`). See per-field doc comments.
  */
 
-import type { OrderStatus, Side } from '../ports/exchange-adapter.js'
+import type { OrderStatus, Side, VenueErrorKind } from '../ports/exchange-adapter.js'
 
 /** Which timer fired (`12_strategy_runtime_and_intent_lifecycle.md` §1 scheduler table). */
 export type TimerKind = 'scan' | 'entry' | 'deadline'
@@ -79,6 +79,14 @@ export interface OrderUpdate {
   readonly status: OrderStatus
   readonly fillPx?: number
   readonly qty?: number
+  /**
+   * Human-readable reject/fail reason (sim precision/min_notional/margin/reduce_only
+   * violation), when present. Optional/additive — `JSON.stringify` drops it when absent,
+   * so golden fixtures are unaffected. 0200 maps raw venue codes into this surface.
+   */
+  readonly reason?: string
+  /** Typed venue-error kind carried by a reject/fail update (`10` §5); 0200 fills the full taxonomy. */
+  readonly errorKind?: VenueErrorKind
 }
 
 /** Position change (private WS, REST reconcile). */

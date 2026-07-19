@@ -15,7 +15,24 @@
 export type Side = 'long' | 'short'
 
 /** Order type by fill lane (`11` §6; fee class per `00_globals.md` §4). */
-export type OrderType = 'market' | 'limit'
+export type OrderType = 'market' | 'limit' | 'stop'
+
+/**
+ * Typed venue-error taxonomy — the 8 names from `10` §5. **Name-only placeholder**:
+ * task 0200 replaces/extends this with the full mapped taxonomy (per-adapter Binance
+ * mapping table + retry/backoff semantics + rate limiter). Declared here in the ports
+ * file (core-visible) so it does not collide with 0200's later adapter-local map, and
+ * so 0160's sim can stamp {@link ../events/types.ts}.OrderUpdate.errorKind today.
+ */
+export type VenueErrorKind =
+  | 'RateLimited'
+  | 'WsTimeout'
+  | 'OrderRejected'
+  | 'InsufficientBalance'
+  | 'AuthError'
+  | 'NetworkError'
+  | 'NotFound'
+  | 'VenueUnavailable'
 
 /** Order FSM states (`11_execution_and_account_state.md` §6). Terminal states feed the intent FSM. */
 export type OrderStatus =
