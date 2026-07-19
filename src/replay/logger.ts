@@ -5,7 +5,7 @@
  * determinism). The compared streams are the WAL and the events log (decision
  * #3). Moved to `src/replay/` in task 0170 with the skeleton composition root
  * (which uses it) so non-test callers need not import test code; `main.ts` gets
- * the real composition in a later task. `test/helpers/logger.ts` re-exports it.
+ * the real composition in a later task.
  *
  * Defaults to `silent` so the unit suite stays quiet; override with `LOG_LEVEL`.
  */

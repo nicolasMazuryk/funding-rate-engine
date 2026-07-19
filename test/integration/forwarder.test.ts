@@ -14,9 +14,6 @@
  *      real lifecycle.)
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { sql } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
@@ -27,11 +24,12 @@ import { DEV_INSTANCE } from '../../src/persistence/db/instance.js'
 import { intentWal } from '../../src/persistence/db/schema.js'
 import { createForwarder } from '../../src/persistence/wal/forwarder.js'
 import { createWalFile, type WalFile } from '../../src/persistence/wal/wal-file.js'
+import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://funding:funding@localhost:5432/funding_drop'
 
 let adminPool: Pool
-let dir: string
+let tmp: TempDir
 let walPath: string
 const openPools: Pool[] = []
 let openWal: WalFile | undefined
@@ -72,8 +70,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await adminPool.query('TRUNCATE intents, intent_wal')
-  dir = mkdtempSync(join(tmpdir(), 'forwarder-test-'))
-  walPath = join(dir, 'instance.wal.jsonl')
+  tmp = tempDir('forwarder-test-')
+  walPath = tmp.walPath
 })
 
 afterEach(async () => {
@@ -83,7 +81,7 @@ afterEach(async () => {
     // Ended pools throw on end(); ignore — they were ended deliberately in-test.
     await pool.end().catch(() => {})
   }
-  rmSync(dir, { recursive: true, force: true })
+  tmp.dispose()
 })
 
 describe('WAL forwarder', () => {

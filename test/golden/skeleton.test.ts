@@ -16,33 +16,33 @@
  *   npx vitest run test/golden/skeleton.test.ts   # confirm it passes against the regenerated file
  */
 
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { formatReplayResult, replayTrace } from '../../src/replay/replay-engine.js'
 import { buildSkeletonEngine } from '../helpers/build-skeleton-engine.js'
 import { runSkeletonScenario, START_MS } from '../helpers/skeleton-scenario.js'
+import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const TRACE_GOLDEN = join(FIXTURES, 'skeleton.trace.golden.jsonl')
 const UPDATE = process.env.UPDATE_GOLDEN === '1'
 
-let dir: string
+let tmp: TempDir
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'skeleton-golden-'))
+  tmp = tempDir('skeleton-golden-')
 })
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  tmp.dispose()
 })
 
 /** Run the scenario once against fresh tmp files and return the unified trace's raw bytes + its path. */
 function captureTrace(suffix: string): { readonly path: string; readonly bytes: string } {
-  const walPath = join(dir, `skeleton${suffix}.wal.jsonl`)
-  const tracePath = join(dir, `skeleton${suffix}.trace.jsonl`)
+  const walPath = tmp.path(`skeleton${suffix}.wal.jsonl`)
+  const tracePath = tmp.path(`skeleton${suffix}.trace.jsonl`)
   const h = buildSkeletonEngine({ startMs: START_MS, walPath, tracePath })
   runSkeletonScenario(h)
   h.engine.dispose()

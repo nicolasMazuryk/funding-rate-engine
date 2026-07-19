@@ -14,11 +14,10 @@
  *    decision to use short `StrategyId`s everywhere and avoid suffix-string parsing.
  */
 
-import YAML from 'yaml'
 import { z } from 'zod'
 import { STRATEGY_IDS, type StrategyId } from './canonical.js'
-import { ConfigParseError } from './errors.js'
 import { zodErrorToConfigError } from './schema.js'
+import { parseYamlMapping } from './yaml.js'
 
 export const EXCHANGE_IDS = ['binance', 'bybit', 'okx', 'bitget', 'gateio', 'kucoin'] as const
 export type ExchangeId = (typeof EXCHANGE_IDS)[number]
@@ -103,15 +102,7 @@ function toProfile(p: ProfileYaml): ExchangeProfile {
  * on any syntax, unknown-key, missing-venue, or bound violation.
  */
 export function parseExchangeProfiles(yamlText: string): Readonly<Record<ExchangeId, ExchangeProfile>> {
-  let raw: unknown
-  try {
-    raw = YAML.parse(yamlText)
-  } catch (e) {
-    throw new ConfigParseError('(yaml)', `YAML syntax error: ${(e as Error).message}`, 'yaml_syntax')
-  }
-  if (raw === null || typeof raw !== 'object') {
-    throw new ConfigParseError('(root)', 'exchanges config must be a YAML mapping', 'invalid_type')
-  }
+  const raw = parseYamlMapping(yamlText, 'exchanges config must be a YAML mapping')
 
   const res = ExchangesYamlSchema.safeParse(raw)
   if (!res.success) throw zodErrorToConfigError(res.error, 'exchanges')

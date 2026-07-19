@@ -1,17 +1,16 @@
-import { closeSync, ftruncateSync, mkdtempSync, openSync, readFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { closeSync, ftruncateSync, openSync, readFileSync } from 'node:fs'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { intentMachine, transitionIntent } from '../../../../src/core/intent/intent-machine.js'
 import type { TransitionLogEntry } from '../../../../src/core/ports/transition-log.js'
 import { createWalFile, type WalFile } from '../../../../src/persistence/wal/wal-file.js'
+import { type TempDir, tempDir } from '../../../helpers/temp-dir.js'
 
-let dir: string
+let tmp: TempDir
 let walPath: string
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'wal-file-test-'))
-  walPath = join(dir, 'instance.wal.jsonl')
+  tmp = tempDir('wal-file-test-')
+  walPath = tmp.walPath
 })
 
 function entry(i: number): TransitionLogEntry {
@@ -84,7 +83,7 @@ describe('createWalFile', () => {
   })
 
   it('reading a nonexistent file returns an empty array', () => {
-    expect(createWalFile({ path: join(dir, 'missing.wal.jsonl') }).readAll()).toEqual([])
+    expect(createWalFile({ path: tmp.path('missing.wal.jsonl') }).readAll()).toEqual([])
   })
 })
 

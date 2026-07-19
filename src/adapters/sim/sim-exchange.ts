@@ -33,6 +33,7 @@ import type {
   TimeRange,
   VenueErrorKind,
 } from '../../core/ports/exchange-adapter.js'
+import { capReduceOnlyQty } from '../../core/sizing/sizing.js'
 import { createFaultEmitter, type FaultRule } from './fault-emitter.js'
 import { type FailSpec, type SimCallClass, SimVenueError } from './sim-venue-error.js'
 
@@ -228,7 +229,7 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
     if (!req.reduceOnly) return requestedQty
     const pos = positions.get(req.symbol)
     const reducible = pos && pos.side !== req.side ? pos.qty : 0
-    return Math.min(requestedQty, reducible)
+    return capReduceOnlyQty(requestedQty, reducible)
   }
 
   function recordOrder(req: OrderRequest, status: Order['status'], fillPx?: number, qty?: number): void {

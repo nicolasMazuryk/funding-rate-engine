@@ -7,11 +7,11 @@
  * keys. Fail loud, fail early: the first invalid field aborts with the exact path.
  */
 
-import YAML from 'yaml'
 import { type Container, liveKeyFor, paramsFor, type StrategyId } from './canonical.js'
 import { deepFreeze } from './deep-freeze.js'
 import { ConfigParseError } from './errors.js'
 import { SIZING_SCHEMAS, STRATEGY_PARAMS_SCHEMAS, StrategyYamlSchema, zodErrorToConfigError } from './schema.js'
+import { parseYamlMapping } from './yaml.js'
 
 export interface ParsedStrategyConfig {
   readonly instance: { readonly exchange: string; readonly strategy: StrategyId; readonly enabled: boolean }
@@ -47,15 +47,7 @@ function mapLive(data: unknown, strategyId: StrategyId, container: Container): R
 }
 
 export function parseStrategyConfig(yamlText: string, strategyId: StrategyId): ParsedStrategyConfig {
-  let raw: unknown
-  try {
-    raw = YAML.parse(yamlText)
-  } catch (e) {
-    throw new ConfigParseError('(yaml)', `YAML syntax error: ${(e as Error).message}`, 'yaml_syntax')
-  }
-  if (raw === null || typeof raw !== 'object') {
-    throw new ConfigParseError('(root)', 'config must be a YAML mapping', 'invalid_type')
-  }
+  const raw = parseYamlMapping(yamlText, 'config must be a YAML mapping')
 
   const container = StrategyYamlSchema.safeParse(raw)
   if (!container.success) throw zodErrorToConfigError(container.error)

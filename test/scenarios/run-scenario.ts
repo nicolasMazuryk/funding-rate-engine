@@ -10,11 +10,9 @@
  * `clock.advanceTo`, so `runScenario` twice from fresh state ⇒ byte-identical `trace`.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import type { EngineEvent } from '../../src/core/events/types.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../helpers/build-skeleton-engine.js'
+import { tempDir } from '../helpers/temp-dir.js'
 import type { Scenario, ScenarioAction } from './dsl.js'
 
 export interface RunResult {
@@ -24,14 +22,8 @@ export interface RunResult {
   cleanup(): void
 }
 
-/** A disposable temp WAL path for a scenario/unit test. */
-export function tempWalPath(prefix = 'scenario-'): { walPath: string; dispose(): void } {
-  const dir = mkdtempSync(join(tmpdir(), prefix))
-  return { walPath: join(dir, 'instance.wal.jsonl'), dispose: () => rmSync(dir, { recursive: true, force: true }) }
-}
-
 export function runScenario(scn: Scenario, opts: { startMs?: number } = {}): RunResult {
-  const tmp = tempWalPath()
+  const tmp = tempDir('scenario-')
   const harness = buildSkeletonEngine({ walPath: tmp.walPath, startMs: opts.startMs })
   const trace: EngineEvent[] = []
   harness.bus.subscribe((e) => trace.push(e))

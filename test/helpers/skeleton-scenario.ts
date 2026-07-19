@@ -34,17 +34,14 @@ export const BTC = { symbol: 'BTC', price: 60_000, predicted: -0.35 } as const
 export const ETH = { symbol: 'ETH', price: 3_000, predicted: 0.01 } as const
 
 /** The triggered intent's id under the scenario constants (`BTC-<entryTs>`). */
-export function triggeredIntentId(_h: SkeletonHarness): string {
-  return `${BTC.symbol}-${ENTRY_TS}`
-}
+export const INTENT_ID = `${BTC.symbol}-${ENTRY_TS}`
 
 /**
  * Script prices + predicted funding (observed at the scan, so fresh), then advance
- * scan → entry → deadline. Under the sim venue every order fills synchronously, so
- * by the time this returns the intent has reached `CLOSED` and both trace files are
- * fully written.
+ * scan → entry. Under the sim venue the entry fills synchronously, so on return the
+ * intent has reached `MONITORING` with the deadline timer scheduled.
  */
-export function runSkeletonScenario(h: SkeletonHarness): void {
+export function driveToEntry(h: SkeletonHarness): void {
   const { clock, exchange, scheduler } = h
 
   exchange.setPrice(BTC.symbol, BTC.price)
@@ -55,5 +52,19 @@ export function runSkeletonScenario(h: SkeletonHarness): void {
   scheduler.start()
   clock.advanceTo(SCAN_TS) // scan → schedules the BTC entry timer
   clock.advanceTo(ENTRY_TS) // entry → SUBMITTING_ENTRY → fill → MONITORING → schedules deadline
-  clock.advanceTo(DEADLINE_TS) // deadline → EXITING → reduce-only fill → CLOSED
+}
+
+/** Advance to the deadline: `MONITORING → EXITING → reduce-only fill → CLOSED`. */
+export function driveToDeadline(h: SkeletonHarness): void {
+  h.clock.advanceTo(DEADLINE_TS)
+}
+
+/**
+ * Full skeleton path: scan → entry → deadline. Under the sim venue every order
+ * fills synchronously, so by the time this returns the intent has reached `CLOSED`
+ * and both trace files are fully written.
+ */
+export function runSkeletonScenario(h: SkeletonHarness): void {
+  driveToEntry(h)
+  driveToDeadline(h)
 }

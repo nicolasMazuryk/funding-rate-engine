@@ -9,79 +9,57 @@
  * `crash-recovery.test.ts` drives, now expressed as a scenario.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { createVirtualClock, type VirtualClock } from '../../src/adapters/clock/virtual-clock.js'
 import { createSimExchange, type SimExchange } from '../../src/adapters/sim/sim-exchange.js'
 import { createEventBus } from '../../src/core/events/bus.js'
 import type { EventBus } from '../../src/core/ports/bus.js'
-import type { OrderAck, OrderRequest } from '../../src/core/ports/exchange-adapter.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../helpers/build-skeleton-engine.js'
-import { BTC, DEADLINE_TS, ENTRY_TS, ETH, SCAN_TS, START_MS } from '../helpers/skeleton-scenario.js'
+import { harnessPool } from '../helpers/harness-pool.js'
+import { spyEntryOrders } from '../helpers/sim-spies.js'
+import { DEADLINE_TS, driveToEntry, INTENT_ID, START_MS } from '../helpers/skeleton-scenario.js'
+import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 import { crash, restart } from './crash-helper.js'
 
-const INTENT_ID = `${BTC.symbol}-${ENTRY_TS}`
-
-let dir: string
+let tmp: TempDir
 let walPath: string
 let clock: VirtualClock
 let bus: EventBus
 let sim: SimExchange
-const harnesses: SkeletonHarness[] = []
+const pool = harnessPool()
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'crash-scenario-'))
-  walPath = join(dir, 'instance.wal.jsonl')
+  tmp = tempDir('crash-scenario-')
+  walPath = tmp.walPath
   clock = createVirtualClock(START_MS)
   bus = createEventBus()
   sim = createSimExchange(clock, bus)
 })
 
 afterEach(() => {
-  for (const h of harnesses.splice(0)) {
-    h.engine.dispose()
-    h.wal.close()
-  }
-  rmSync(dir, { recursive: true, force: true })
+  pool.disposeAll()
+  tmp.dispose()
 })
 
 function build(exchange: SimExchange): SkeletonHarness {
-  const h = buildSkeletonEngine({ walPath, clock, bus, exchange })
-  harnesses.push(h)
-  return h
+  return pool.track(buildSkeletonEngine({ walPath, clock, bus, exchange }))
 }
 
 describe('scenario: crash mid-intent', () => {
   it('resumes a MONITORING intent from the WAL and closes with no duplicate entry order', async () => {
-    let entryOrders = 0
-    const counting: SimExchange = {
-      ...sim,
-      placeOrder(req: OrderRequest): Promise<OrderAck> {
-        if (req.clientOrderId.includes('-entry-')) entryOrders += 1
-        return sim.placeOrder(req)
-      },
-    }
+    const spy = spyEntryOrders(sim)
 
-    const engineA = build(counting)
-    sim.setPrice(BTC.symbol, BTC.price)
-    sim.setPrice(ETH.symbol, ETH.price)
-    sim.setPredictedFunding(BTC.symbol, BTC.predicted, SCAN_TS)
-    sim.setPredictedFunding(ETH.symbol, ETH.predicted, SCAN_TS)
-    engineA.scheduler.start()
-    clock.advanceTo(SCAN_TS)
-    clock.advanceTo(ENTRY_TS) // entry fills → MONITORING, WAL carries the deadline
+    const engineA = build(spy.exchange)
+    driveToEntry(engineA) // entry fills → MONITORING, WAL carries the deadline
     expect(engineA.engine.intentState(INTENT_ID)).toBe('MONITORING')
 
     crash(engineA)
 
-    const engineB = await restart({ walPath, clock, bus, exchange: counting })
-    harnesses.push(engineB)
+    const engineB = pool.track(await restart({ walPath, clock, bus, exchange: spy.exchange }))
     expect(engineB.engine.intentState(INTENT_ID)).toBe('MONITORING')
 
     clock.advanceTo(DEADLINE_TS)
     expect(engineB.engine.intentState(INTENT_ID)).toBe('CLOSED')
-    expect(entryOrders).toBe(1) // one entry-leg order across both engines
+    expect(spy.count()).toBe(1) // one entry-leg order across both engines
   })
 })

@@ -1,45 +1,39 @@
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineEvent, Timer } from '../../../../src/core/events/types.js'
 import type { ReconciliationRecord } from '../../../../src/core/runtime/engine.js'
 import { createRiskGate } from '../../../../src/risk/gate.js'
-import { createKillSwitch } from '../../../../src/risk/kill-switch.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../../../helpers/build-skeleton-engine.js'
+import { harnessPool } from '../../../helpers/harness-pool.js'
 import { createInMemoryRepo, type InMemoryRepo } from '../../../helpers/in-memory-repo.js'
+import { pausedKillSwitch } from '../../../helpers/kill-switch.js'
 import {
   BTC,
   DEADLINE_TS,
   ENTRY_TS,
   ETH,
+  INTENT_ID,
   runSkeletonScenario,
   SCAN_TS,
   START_MS,
-  triggeredIntentId,
 } from '../../../helpers/skeleton-scenario.js'
+import { type TempDir, tempDir } from '../../../helpers/temp-dir.js'
 
-let dir: string
+let tmp: TempDir
 let walPath: string
-const harnesses: SkeletonHarness[] = []
+const pool = harnessPool()
 
 function build(opts: Omit<Parameters<typeof buildSkeletonEngine>[0], 'startMs'>): SkeletonHarness {
-  const h = buildSkeletonEngine({ startMs: START_MS, ...opts })
-  harnesses.push(h)
-  return h
+  return pool.track(buildSkeletonEngine({ startMs: START_MS, ...opts }))
 }
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'engine-test-'))
-  walPath = join(dir, 'instance.wal.jsonl')
+  tmp = tempDir('engine-test-')
+  walPath = tmp.walPath
 })
 
 afterEach(() => {
-  for (const h of harnesses.splice(0)) {
-    h.engine.dispose()
-    h.wal.close()
-  }
-  rmSync(dir, { recursive: true, force: true })
+  pool.disposeAll()
+  tmp.dispose()
 })
 
 describe('engine — happy path', () => {
@@ -49,7 +43,7 @@ describe('engine — happy path', () => {
     const h = build({ walPath, repo, onReconciliation: (r) => reconciliations.push(r) })
 
     runSkeletonScenario(h)
-    const intentId = triggeredIntentId(h)
+    const intentId = INTENT_ID
 
     expect(h.engine.intentState(intentId)).toBe('CLOSED')
     // Position closed out (reduce-only exit flattened it).
@@ -74,7 +68,7 @@ describe('engine — happy path', () => {
   it('writes exactly the four transition records to the WAL, in order', () => {
     const h = build({ walPath })
     runSkeletonScenario(h)
-    const intentId = triggeredIntentId(h)
+    const intentId = INTENT_ID
 
     const transitions = h.wal.readAll().map((r) => [r.fromState, r.toState])
     expect(transitions).toEqual([
@@ -93,20 +87,11 @@ describe('engine — happy path', () => {
 })
 
 describe('engine — preflight reject', () => {
-  /** A kill switch fixed at `paused` with a throwaway WAL, so `h.wal` holds only engine transitions. */
-  function pausedKillSwitch() {
-    return createKillSwitch({
-      initial: 'paused',
-      clock: { now: () => 0, scheduleTimer: () => ({ cancel() {} }) },
-      wal: { append: () => Promise.resolve() },
-    })
-  }
-
   it('aborts SELECTED → ABORTED{kill_switch} and places no order', () => {
     const h = build({ walPath, killSwitch: pausedKillSwitch() })
     const placeOrder = vi.spyOn(h.exchange, 'placeOrder')
     runSkeletonScenario(h)
-    const intentId = triggeredIntentId(h)
+    const intentId = INTENT_ID
 
     expect(h.engine.intentState(intentId)).toBe('ABORTED')
     expect(placeOrder).not.toHaveBeenCalled()
@@ -144,7 +129,7 @@ describe('engine — preflight reject', () => {
     // amountUsd 50 / leverage 1 needs 50; only 10 free.
     const h = build({ walPath, initialBalance: { asset: 'USDT', free: 10, used: 0 } })
     runSkeletonScenario(h)
-    const intentId = triggeredIntentId(h)
+    const intentId = INTENT_ID
 
     expect(h.engine.intentState(intentId)).toBe('ABORTED')
     const transitions = h.wal.readAll().map((r) => [r.fromState, r.toState])

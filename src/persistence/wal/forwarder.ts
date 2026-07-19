@@ -14,11 +14,11 @@
  * sidecar file), so a restart re-sends nothing already shipped.
  */
 
-import { and, eq, max } from 'drizzle-orm'
+import { max } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import type { Instance } from '../db/instance.js'
-import { intentWal } from '../db/schema.js'
+import { instanceWhere, intentWal } from '../db/schema.js'
 import type { WalFile } from './wal-file.js'
 
 /** Default forwarder tick interval (`14` §2.1: "every 200 ms or N entries"). */
@@ -46,11 +46,7 @@ export function createForwarder({
   readonly intervalMs?: number
 }): Forwarder {
   const db = drizzle(pool)
-  const instanceScope = and(
-    eq(intentWal.exchange, instance.exchange),
-    eq(intentWal.strategy, instance.strategy),
-    eq(intentWal.subaccount, instance.subaccount),
-  )
+  const instanceScope = instanceWhere(intentWal, instance)
 
   // Highest forwarded seq. Re-derived from the DB on the first successful tick
   // (`14` §2.1); -1 means "nothing shipped yet".

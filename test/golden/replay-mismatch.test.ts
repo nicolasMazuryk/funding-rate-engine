@@ -9,24 +9,24 @@
  * failure" a permanent, `npm run verify`-covered check, not a manual step.
  */
 
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { formatReplayResult, replayTrace } from '../../src/replay/replay-engine.js'
+import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 
 const FIXTURES = join(dirname(fileURLToPath(import.meta.url)), 'fixtures')
 const TRACE_GOLDEN = join(FIXTURES, 'skeleton.trace.golden.jsonl')
 
-let dir: string
+let tmp: TempDir
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), 'replay-mismatch-'))
+  tmp = tempDir('replay-mismatch-')
 })
 
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true })
+  tmp.dispose()
 })
 
 /** Copy the golden with the first `transition` record's `toState` mangled; return {path, corrupted}. */
@@ -44,7 +44,7 @@ function corruptFirstTransition(): { readonly path: string; readonly toState: st
     }
     return line
   })
-  const path = join(dir, 'corrupted.trace.jsonl')
+  const path = tmp.path('corrupted.trace.jsonl')
   writeFileSync(path, mangled.join('\n'))
   return { path, toState, intentId }
 }

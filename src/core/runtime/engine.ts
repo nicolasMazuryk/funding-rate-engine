@@ -75,31 +75,34 @@ export interface EngineDeps {
 }
 
 /**
- * The enriched WAL payload written on every transition — a superset of
- * {@link IntentTerminalPayload}. Crash recovery reads it back to rebuild the
- * symbol, deterministic order id, and deadline instant from the WAL alone.
+ * The five optional WAL fields carried on an intent's transitions — the exact
+ * set crash recovery reads back to rebuild the deterministic order id, entry
+ * side/qty/fill, and deadline instant from the WAL alone.
  */
-export interface EnginePayload {
-  readonly symbol: string
+export interface IntentWalFields {
   readonly clientOrderId?: string
   readonly entrySide?: Side
   readonly entryQty?: number
   readonly entryFillPx?: number
   readonly tDeadlineMs?: number
+}
+
+/**
+ * The enriched WAL payload written on every transition — a superset of
+ * {@link IntentTerminalPayload}. Crash recovery reads it back to rebuild the
+ * symbol, deterministic order id, and deadline instant from the WAL alone.
+ */
+export type EnginePayload = IntentWalFields & {
+  readonly symbol: string
   readonly exitReason?: ExitReason
   readonly errorCode?: ErrorCode
 }
 
 /** A non-terminal intent rebuilt from the WAL for {@link Engine.recover}. */
-export interface RecoveredIntent {
+export type RecoveredIntent = IntentWalFields & {
   readonly intentId: string
   readonly symbol: string
   readonly state: IntentState
-  readonly clientOrderId?: string
-  readonly entrySide?: Side
-  readonly entryQty?: number
-  readonly entryFillPx?: number
-  readonly tDeadlineMs?: number
 }
 
 /** The reconciliation stub's finding: engine fill record vs venue ground truth (`15`, real reconciliation 0400). */
@@ -123,13 +126,7 @@ export interface Engine {
 }
 
 /** Extra WAL-payload fields set per transition, beyond the terminal `exitReason`/`errorCode`. */
-interface TransitionExtras {
-  readonly clientOrderId?: string
-  readonly entrySide?: Side
-  readonly entryQty?: number
-  readonly entryFillPx?: number
-  readonly tDeadlineMs?: number
-}
+type TransitionExtras = IntentWalFields
 
 /** In-memory projection of one intent; the durable record is the WAL. */
 interface IntentRecord {
@@ -232,16 +229,9 @@ export function createEngine(deps: EngineDeps): Engine {
     const { intentId, symbol, from, to, payload, extras = {} } = params
     validateTransition(from, to, payload) // legal-transition + R12 check (throws on violation)
 
-    const enriched: EnginePayload = {
-      symbol,
-      ...(extras.clientOrderId !== undefined ? { clientOrderId: extras.clientOrderId } : {}),
-      ...(extras.entrySide !== undefined ? { entrySide: extras.entrySide } : {}),
-      ...(extras.entryQty !== undefined ? { entryQty: extras.entryQty } : {}),
-      ...(extras.entryFillPx !== undefined ? { entryFillPx: extras.entryFillPx } : {}),
-      ...(extras.tDeadlineMs !== undefined ? { tDeadlineMs: extras.tDeadlineMs } : {}),
-      ...(payload.exitReason !== undefined ? { exitReason: payload.exitReason } : {}),
-      ...(payload.errorCode !== undefined ? { errorCode: payload.errorCode } : {}),
-    }
+    // JSON.stringify (WAL) and stableStringify (trace) both drop `undefined`, so
+    // spreading the optional fields is byte-identical to conditionally setting them.
+    const enriched: EnginePayload = { symbol, ...extras, ...payload }
     // WAL first — this gates the side effect (`14` §2.1). appendFileSync fsyncs
     // before returning, so durability holds even though we do not await.
     void wal.append({

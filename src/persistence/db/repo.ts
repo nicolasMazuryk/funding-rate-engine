@@ -6,13 +6,13 @@
  * instances stay isolated inside the one fleet-wide database (`14` §3).
  */
 
-import { and, eq, notInArray } from 'drizzle-orm'
+import { and, notInArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { TERMINAL_INTENT_STATES } from '../../core/intent/intent-machine.js'
 import type { IntentSnapshot, Repo } from '../../core/ports/index.js'
 import type { Instance } from './instance.js'
-import { intents } from './schema.js'
+import { instanceWhere, intents } from './schema.js'
 
 /** Build a `Repo` backed by `pool`, scoped to `instance`. */
 export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly instance: Instance }): Repo {
@@ -52,14 +52,7 @@ export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly
       const rows = await db
         .select()
         .from(intents)
-        .where(
-          and(
-            eq(intents.exchange, instance.exchange),
-            eq(intents.strategy, instance.strategy),
-            eq(intents.subaccount, instance.subaccount),
-            notInArray(intents.state, [...TERMINAL_INTENT_STATES]),
-          ),
-        )
+        .where(and(instanceWhere(intents, instance), notInArray(intents.state, [...TERMINAL_INTENT_STATES])))
       return rows.map((r) => ({
         intentId: r.intentId,
         state: r.state,

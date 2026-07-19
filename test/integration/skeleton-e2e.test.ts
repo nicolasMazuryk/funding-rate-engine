@@ -10,9 +10,6 @@
  * the four transition rows for that intent.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
-import { join } from 'node:path'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool } from 'pg'
@@ -20,17 +17,19 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { DEV_INSTANCE } from '../../src/persistence/db/instance.js'
 import { createPgRepo } from '../../src/persistence/db/repo.js'
 import { createForwarder } from '../../src/persistence/wal/forwarder.js'
-import { createKillSwitch } from '../../src/risk/kill-switch.js'
-import { buildSkeletonEngine, type SkeletonHarness } from '../helpers/build-skeleton-engine.js'
-import { runSkeletonScenario, START_MS, triggeredIntentId } from '../helpers/skeleton-scenario.js'
+import { buildSkeletonEngine } from '../helpers/build-skeleton-engine.js'
+import { harnessPool } from '../helpers/harness-pool.js'
+import { pausedKillSwitch } from '../helpers/kill-switch.js'
+import { INTENT_ID, runSkeletonScenario, START_MS } from '../helpers/skeleton-scenario.js'
+import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://funding:funding@localhost:5432/funding_drop'
 
 let adminPool: Pool
-let dir: string
+let tmp: TempDir
 let walPath: string
 const openPools: Pool[] = []
-const harnesses: SkeletonHarness[] = []
+const harnesses = harnessPool()
 
 /**
  * A tracked pool. `max` defaults to 1: the engine fires its current-state
@@ -57,30 +56,26 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await adminPool.query('TRUNCATE intents, intent_wal')
-  dir = mkdtempSync(join(tmpdir(), 'skeleton-e2e-'))
-  walPath = join(dir, 'instance.wal.jsonl')
+  tmp = tempDir('skeleton-e2e-')
+  walPath = tmp.walPath
 })
 
 afterEach(async () => {
-  for (const h of harnesses.splice(0)) {
-    h.engine.dispose()
-    h.wal.close()
-  }
+  harnesses.disposeAll()
   for (const pool of openPools.splice(0)) {
     await pool.end().catch(() => {})
   }
-  rmSync(dir, { recursive: true, force: true })
+  tmp.dispose()
 })
 
 describe('skeleton end-to-end through Postgres', () => {
   it('persists the intent as CLOSED/timed and forwards its four WAL transitions', async () => {
     const repo = createPgRepo({ pool: newPool(), instance: DEV_INSTANCE })
-    const harness = buildSkeletonEngine({ startMs: START_MS, walPath, repo })
-    harnesses.push(harness)
+    const harness = harnesses.track(buildSkeletonEngine({ startMs: START_MS, walPath, repo }))
     const forwarder = createForwarder({ wal: harness.wal, pool: newPool(), instance: DEV_INSTANCE })
 
     runSkeletonScenario(harness)
-    const intentId = triggeredIntentId(harness)
+    const intentId = INTENT_ID
 
     // Current-state projection is written via un-awaited upserts — wait for CLOSED.
     await vi.waitFor(
@@ -109,19 +104,14 @@ describe('skeleton end-to-end through Postgres', () => {
 
   it('with the kill switch paused: places no order and persists one ABORTED intent', async () => {
     const repo = createPgRepo({ pool: newPool(), instance: DEV_INSTANCE })
-    // Kill switch fixed at `paused` with a throwaway WAL, so the harness WAL holds only engine transitions.
-    const killSwitch = createKillSwitch({
-      initial: 'paused',
-      clock: { now: () => 0, scheduleTimer: () => ({ cancel() {} }) },
-      wal: { append: () => Promise.resolve() },
-    })
-    const harness = buildSkeletonEngine({ startMs: START_MS, walPath, repo, killSwitch })
-    harnesses.push(harness)
+    const harness = harnesses.track(
+      buildSkeletonEngine({ startMs: START_MS, walPath, repo, killSwitch: pausedKillSwitch() }),
+    )
     const placeOrder = vi.spyOn(harness.exchange, 'placeOrder')
     const forwarder = createForwarder({ wal: harness.wal, pool: newPool(), instance: DEV_INSTANCE })
 
     runSkeletonScenario(harness)
-    const intentId = triggeredIntentId(harness)
+    const intentId = INTENT_ID
 
     expect(placeOrder).not.toHaveBeenCalled()
     await vi.waitFor(

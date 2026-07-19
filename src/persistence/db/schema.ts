@@ -12,7 +12,9 @@
  * nullable for now, sharpened as those producers land.
  */
 
-import { bigint, index, jsonb, pgTable, serial, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import { and, eq } from 'drizzle-orm'
+import { bigint, index, jsonb, type PgColumn, pgTable, serial, text, uniqueIndex } from 'drizzle-orm/pg-core'
+import type { Instance } from './instance.js'
 
 /** One row per intent: current FSM state + identity, scoped by instance (`14` §3). */
 export const intents = pgTable(
@@ -65,3 +67,19 @@ export const intentWal = pgTable(
     index('intent_wal_instance_seq_idx').on(table.exchange, table.strategy, table.subaccount, table.seq),
   ],
 )
+
+/** Columns every instance-scoped table carries (`14` §3). */
+interface InstanceScoped {
+  readonly exchange: PgColumn
+  readonly strategy: PgColumn
+  readonly subaccount: PgColumn
+}
+
+/** The `(exchange, strategy, subaccount)` equality filter that scopes a query to one instance. */
+export function instanceWhere(table: InstanceScoped, instance: Instance) {
+  return and(
+    eq(table.exchange, instance.exchange),
+    eq(table.strategy, instance.strategy),
+    eq(table.subaccount, instance.subaccount),
+  )
+}
