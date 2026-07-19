@@ -19,11 +19,12 @@ You have zero memory of previous sessions. Ground yourself:
 5. **Implement**, following `docs/agent-workflow.md` (test-first where practical) and the task's Scope — **In scope** fully, **Out of scope** not at all. If you discover a blocker or a spec contradiction not covered by ROADMAP §3: ask (see "Ask, don't invent" below); otherwise make the smallest reasonable decision, implement it, and record it in STATUS notes — do not stall, do not silently expand scope.
 6. **Verify** by running the task's "Verification (definition of done)" steps exactly, plus `npm run verify`. Every step must pass. All **pre-existing** checks must still pass — a task never leaves the repo red.
 7. **Self-review** against `docs/architecture.md` rules (purity boundary, WAL-before-side-effect, fail-loud, KISS, DRY, "the less code - the better") and the task sizing intent (no scope creep into later tasks).
-8. **Update the ledger.** Set the task to `done` in `STATUS.md`; note anything the next agent must know (assumption made, substitution recorded, follow-up needed).
+8. **Update the ledger.** Set the task to `done` in `STATUS.md`; note only what the next agent must know (assumption made, substitution recorded, follow-up needed). **Keep notes terse — a few short clauses, not prose.** STATUS.md is re-read at the start of every session, so long notes cost context on every future task. Put detail in the commit/PR, not the ledger.
 9. **Commit** with a conventional message referencing the task ID, e.g.:
    `feat(core): event bus, ports, purity lint [task 0030]`
    `test(binance): testnet tier suite [task 0260]`
    One task = one commit (or a small series, each referencing the task ID). Never mix tasks in a commit.
+10. **Push and open a PR.** Push the task branch and open a Pull Request into `main` (`gh pr create --base main`). Title and body reference the task ID; keep the body concise.
 
 ## Rules
 
@@ -50,4 +51,4 @@ Rules:
 
 ## Status ledger
 
-The ledger is `docs/plan/STATUS.md`: one row per task — `ID | status | notes`. Statuses: `todo` → `in_progress` → `done` (plus `blocked` with a reason in notes). Agents edit only that file to report progress.
+The ledger is `docs/plan/STATUS.md`: one row per task — `ID | status | notes`. Statuses: `todo` → `in_progress` → `done` (plus `blocked` with a reason in notes). Agents edit only that file to report progress. Keep notes terse (a few short clauses); narration and detail belong in the commit/PR or `SUGGESTIONS.md`, not the ledger.
