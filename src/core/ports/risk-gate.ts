@@ -6,25 +6,34 @@
  * (one gate) and data-driven (limits in `config.risk`), so every strategy inherits
  * identical checks and risk stays auditable in one place.
  *
- * PLACEHOLDER: `RiskIntent` is the minimal shape the gate reads today. The intent
- * FSM (0040) owns the full intent type; the concrete gate + breakers land in 0140.
+ * The concrete gate lives in `src/risk/gate.ts` (0140); breakers land in 0380.
  */
 
-/** The subset of an intent the gate inspects. Placeholder — sharpened by 0040/0140. */
+import type { ErrorCode } from '../intent/intent-machine.js'
+
+/** The subset of an intent the gate inspects. */
 export interface RiskIntent {
   readonly symbol: string
   /** Fixed notional per intent, quote currency (`00_globals.md` §4). */
   readonly amountUsd: number
 }
 
-/** The gate's verdict. On reject, `code` maps to `00_globals.md` §10.2 error codes. */
+/** Engine-level state the gate weighs alongside the intent (`12` §3 / `13` §1). */
+export interface RiskContext {
+  /** Live (non-terminal) intents already open — concurrency-limit input. */
+  readonly openIntentCount: number
+  /** Circuit-breaker state (stub `false` until 0380). */
+  readonly breakerOpen: boolean
+}
+
+/** The gate's verdict. On reject, `code` is the `00_globals.md` §10.2 error code. */
 export interface RiskDecision {
   readonly allowed: boolean
-  /** Error code when `allowed` is `false` (e.g. `kill_switch`, `max_concurrent_intents`). */
-  readonly code?: string
+  /** Error code when `allowed` is `false`. */
+  readonly code?: ErrorCode
 }
 
 export interface RiskGate {
   /** Synchronous, side-effect-free verdict for one intent (`12` §3). */
-  check(intent: RiskIntent): RiskDecision
+  check(intent: RiskIntent, context: RiskContext): RiskDecision
 }

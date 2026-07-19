@@ -72,6 +72,12 @@ export type ErrorCode =
   | 'kill_switch'
   | 'limit_expired'
   | 'ladder_no_fills'
+  // preflight risk gate + balance/account checks (task 0140, `12` §3 / `13` §1)
+  | 'risk_max_concurrent_intents'
+  | 'risk_max_notional_usd'
+  | 'risk_breaker_open'
+  | 'insufficient_balance'
+  | 'account_setup_incomplete'
   // S6 entry state machine (`07_strategy_6.md` §3)
   | 'pre_funding_order_failed'
   | 'pre_funding_order_rejected'

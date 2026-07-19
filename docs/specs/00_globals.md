@@ -217,6 +217,11 @@ The classic defect: a take-profit written as a decimal fraction but read as perc
 | Value | Meaning | Strategies |
 |---|---|---|
 | `kill_switch` | Rejected in preflight | any |
+| `risk_max_concurrent_intents` | Rejected in preflight: live-intent count at the risk-gate limit | any |
+| `risk_max_notional_usd` | Rejected in preflight: intent notional over the risk-gate limit | any |
+| `risk_breaker_open` | Rejected in preflight: a circuit breaker is open | any |
+| `insufficient_balance` | Rejected in preflight: free balance below required margin (`amountUsd / leverage`), or balance unknown (fail-closed) | any |
+| `account_setup_incomplete` | Rejected in preflight: leverage/margin-mode setup not done in advance (`11` §1) | any |
 | `limit_expired` | Entry limit never filled by deadline; cancelled; no position | 4.2a (**§11-R5** — undocumented code-only outcome in source, now normative) |
 | `ladder_no_fills` | No rung filled by deadline; ladder cancelled | 4.1a |
 | `pre_funding_order_failed` / `pre_funding_order_rejected` / `pre_funding_not_filled` / `funding_event_timeout` / `main_order_failed` / `main_order_rejected` / `close_pre_funding_failed` | S6 entry state machine — see `07_strategy_6.md` §3 | 6 |

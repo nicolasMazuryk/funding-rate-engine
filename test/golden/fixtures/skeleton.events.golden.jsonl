@@ -1,3 +1,5 @@
+{"price":60000,"symbol":"BTC","ts":25200000,"type":"MarketTick"}
+{"price":3000,"symbol":"ETH","ts":25200000,"type":"MarketTick"}
 {"rate":-0.35,"symbol":"BTC","ts":28680000,"type":"FundingPredicted"}
 {"rate":0.01,"symbol":"ETH","ts":28680000,"type":"FundingPredicted"}
 {"kind":"scan","ts":28680000,"type":"Timer"}

@@ -17,10 +17,12 @@
  * `tDeadlineMs` — everything crash recovery needs to rebuild from the WAL alone.
  *
  * This is skeleton wiring, not the production runtime: the strategy is a stub
- * (0280), preflight is a bare boolean (real risk gate 0140), and recovery covers
- * only the two skeleton states (full matrix 0370).
+ * (0280), sizing is a fixed qty (real sizing 0280), and recovery covers only the
+ * two skeleton states (full matrix 0370). Preflight (kill switch + risk gate +
+ * balance/precision/account/market checks) lands here in 0140.
  */
 
+import type { KillSwitchState } from '../../config/env.js'
 import { assertNever, type EngineEvent, type FundingPredicted, type OrderUpdate, type Timer } from '../events/types.js'
 import {
   type ErrorCode,
@@ -32,12 +34,14 @@ import {
 } from '../intent/intent-machine.js'
 import type { EventBus, Unsubscribe } from '../ports/bus.js'
 import type { Clock } from '../ports/clock.js'
-import type { ExchangeAdapter, Order, Side } from '../ports/exchange-adapter.js'
+import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-adapter.js'
 import type { Repo } from '../ports/repo.js'
+import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
 import type { RuntimeStrategyConfig, StrategyModule, StrategyRegistry } from '../strategies/registry.js'
 import { type FindCandidatesInput, findCandidates } from './finder.js'
 import { computeFundingSchedule } from './funding-schedule.js'
+import { type PreflightSnapshot, runPreflight } from './preflight.js'
 import type { Scheduler } from './scheduler.js'
 
 /** Skeleton is long-only (`sim-exchange.ts` accrual convention: longs profit on very-negative funding). */
@@ -57,8 +61,14 @@ export interface EngineDeps {
   readonly registry: StrategyRegistry
   /** Engine-level runtime config for the active strategy (threshold, direction, offset, hold, qty). */
   readonly strategyConfig: RuntimeStrategyConfig
-  /** Preflight stub: a single kill-switch-style boolean, evaluated before entry (real gate 0140). Defaults to always-pass. */
-  readonly preflight?: () => boolean
+  /** Risk gate evaluated in preflight (`13` §1). Defaults to always-allow. */
+  readonly riskGate?: RiskGate
+  /** Kill-switch state source read in preflight (`13` §2). Defaults to `off`. */
+  readonly killSwitch?: { state(): KillSwitchState }
+  /** Seed balance for the preflight margin check; `undefined` fails closed (no hidden default per fail-loud). */
+  readonly initialBalance?: Balance
+  /** Whether leverage/margin-mode setup ran in advance (`11` §1); real producer 0240. Defaults to `true`. */
+  readonly accountSetupComplete?: boolean
   /** Reconciliation sink invoked after `CLOSED` (composition logs the diff; no throw on mismatch). */
   readonly onReconciliation?: (record: ReconciliationRecord) => void
 }
@@ -179,13 +189,25 @@ function resolveModule(registry: StrategyRegistry, id: RuntimeStrategyConfig['id
 
 export function createEngine(deps: EngineDeps): Engine {
   const { bus, clock, scheduler, exchange, wal, repo, registry, strategyConfig } = deps
-  const preflight = deps.preflight ?? (() => true)
+  const riskGate: RiskGate = deps.riskGate ?? { check: () => ({ allowed: true }) }
+  const killSwitch = deps.killSwitch ?? { state: (): KillSwitchState => 'off' }
+  const accountSetupComplete = deps.accountSetupComplete ?? true
   // Fail loud on misconfiguration: an id with no registered module is a startup bug, not a runtime skip.
   const activeModule = resolveModule(registry, strategyConfig.id)
 
   const intents = new Map<string, IntentRecord>()
   const pendingOrders = new Map<string, PendingOrder>()
   const predicted = new Map<string, FundingPredicted>()
+  // Latest venue state the preflight reads, updated from the event stream.
+  let latestBalance: Balance | undefined = deps.initialBalance
+  const latestPrice = new Map<string, number>()
+
+  /** Count of live (non-terminal) intents — the risk gate's concurrency input. */
+  function countLiveIntents(): number {
+    let count = 0
+    for (const rec of intents.values()) if (!TERMINAL_INTENT_STATES.includes(rec.state)) count++
+    return count
+  }
 
   /**
    * Validate and record one transition, then durably WAL it before the side
@@ -264,15 +286,38 @@ export function createEngine(deps: EngineDeps): Engine {
     }
   }
 
+  /** Build the preflight snapshot for `symbol` from the engine's current venue view. */
+  function preflightSnapshot(symbol: string): PreflightSnapshot {
+    const market = exchange.markets().find((m) => m.normalized === symbol)
+    return {
+      killSwitch: killSwitch.state(),
+      openIntentCount: countLiveIntents(),
+      breakerOpen: false, // hardcoded until circuit breakers land (0380).
+      amountUsd: strategyConfig.amountUsd,
+      leverage: strategyConfig.leverage,
+      balance: latestBalance,
+      qty: strategyConfig.entryQty,
+      price: latestPrice.get(symbol),
+      instrument: exchange.normalize(symbol),
+      accountSetupComplete,
+      marketStatus: market?.status ?? 'delisted',
+    }
+  }
+
   function onEntry(event: Timer): void {
     const symbol = event.symbol
     if (symbol === undefined) return
     const intentId = `${symbol}-${event.ts}`
+
+    // Preflight before creating the intent row: `skip` leaves no trace (`12` §3 / `13` §6).
+    const result = runPreflight(preflightSnapshot(symbol), riskGate, symbol)
+    if (result.kind === 'skip') return
+
     const rec: IntentRecord = { symbol, state: 'SELECTED', entrySide: ENTRY_SIDE, entryQty: strategyConfig.entryQty }
     intents.set(intentId, rec)
 
-    if (!preflight()) {
-      commit({ intentId, symbol, from: 'SELECTED', to: 'ABORTED', payload: { errorCode: 'kill_switch' } })
+    if (result.kind === 'reject') {
+      commit({ intentId, symbol, from: 'SELECTED', to: 'ABORTED', payload: { errorCode: result.errorCode } })
       return
     }
 
@@ -391,12 +436,17 @@ export function createEngine(deps: EngineDeps): Engine {
       case 'OrderUpdate':
         onOrderUpdate(event)
         return
+      // Latest price/balance feed the preflight snapshot (`12` §3).
+      case 'MarketTick':
+        latestPrice.set(event.symbol, event.price)
+        return
+      case 'BalanceUpdate':
+        latestBalance = { asset: event.asset, free: event.free, used: event.used }
+        return
       // Not consumed by the skeleton yet — explicit no-ops keep the switch exhaustive.
       case 'FundingSettled':
       case 'FundingFeeAccrued':
-      case 'MarketTick':
       case 'PositionUpdate':
-      case 'BalanceUpdate':
         return
       default:
         assertNever(event)

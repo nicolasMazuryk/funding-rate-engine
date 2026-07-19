@@ -1,9 +1,11 @@
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineEvent, Timer } from '../../../../src/core/events/types.js'
 import type { ReconciliationRecord } from '../../../../src/core/runtime/engine.js'
+import { createRiskGate } from '../../../../src/risk/gate.js'
+import { createKillSwitch } from '../../../../src/risk/kill-switch.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../../../helpers/build-skeleton-engine.js'
 import { createInMemoryRepo, type InMemoryRepo } from '../../../helpers/in-memory-repo.js'
 import {
@@ -91,8 +93,56 @@ describe('engine — happy path', () => {
 })
 
 describe('engine — preflight reject', () => {
+  /** A kill switch fixed at `paused` with a throwaway WAL, so `h.wal` holds only engine transitions. */
+  function pausedKillSwitch() {
+    return createKillSwitch({
+      initial: 'paused',
+      clock: { now: () => 0, scheduleTimer: () => ({ cancel() {} }) },
+      wal: { append: () => Promise.resolve() },
+    })
+  }
+
   it('aborts SELECTED → ABORTED{kill_switch} and places no order', () => {
-    const h = build({ walPath, preflight: () => false })
+    const h = build({ walPath, killSwitch: pausedKillSwitch() })
+    const placeOrder = vi.spyOn(h.exchange, 'placeOrder')
+    runSkeletonScenario(h)
+    const intentId = triggeredIntentId(h)
+
+    expect(h.engine.intentState(intentId)).toBe('ABORTED')
+    expect(placeOrder).not.toHaveBeenCalled()
+    const transitions = h.wal.readAll().map((r) => [r.fromState, r.toState])
+    expect(transitions).toEqual([['SELECTED', 'ABORTED']])
+    const aborted = h.wal.readAll()[0]
+    expect(aborted).toBeDefined()
+    const abortedPayload = aborted?.payload as { errorCode?: string }
+    expect(abortedPayload.errorCode).toBe('kill_switch')
+  })
+
+  it('rejects the second concurrent entry with risk_max_concurrent_intents', () => {
+    const h = build({ walPath, riskGate: createRiskGate({ maxConcurrentIntents: 1, maxNotionalUsd: 100 }) })
+    const { clock, exchange, scheduler } = h
+    exchange.setPrice(BTC.symbol, BTC.price)
+    exchange.setPrice(ETH.symbol, ETH.price)
+    // Both inside the proximity band; ETH is more negative → enters first (stays live at MONITORING).
+    exchange.setPredictedFunding(BTC.symbol, -0.35, SCAN_TS)
+    exchange.setPredictedFunding(ETH.symbol, -0.38, SCAN_TS)
+    scheduler.start()
+    clock.advanceTo(SCAN_TS)
+    clock.advanceTo(ENTRY_TS)
+
+    // ETH occupies the single slot; BTC's entry is rejected by the concurrency limit.
+    expect(h.engine.intentState(`${ETH.symbol}-${ENTRY_TS}`)).toBe('MONITORING')
+    const btcId = `${BTC.symbol}-${ENTRY_TS}`
+    expect(h.engine.intentState(btcId)).toBe('ABORTED')
+    const btcAbort = h.wal.readAll().find((r) => r.intentId === btcId && r.toState === 'ABORTED')
+    expect(btcAbort).toBeDefined()
+    const btcPayload = btcAbort?.payload as { errorCode?: string }
+    expect(btcPayload.errorCode).toBe('risk_max_concurrent_intents')
+  })
+
+  it('aborts with insufficient_balance when free balance is below required margin', () => {
+    // amountUsd 50 / leverage 1 needs 50; only 10 free.
+    const h = build({ walPath, initialBalance: { asset: 'USDT', free: 10, used: 0 } })
     runSkeletonScenario(h)
     const intentId = triggeredIntentId(h)
 
@@ -102,7 +152,28 @@ describe('engine — preflight reject', () => {
     const aborted = h.wal.readAll()[0]
     expect(aborted).toBeDefined()
     const abortedPayload = aborted?.payload as { errorCode?: string }
-    expect(abortedPayload.errorCode).toBe('kill_switch')
+    expect(abortedPayload.errorCode).toBe('insufficient_balance')
+  })
+})
+
+describe('engine — preflight skip', () => {
+  it('leaves no intent row when the order is below min notional', () => {
+    const repo = createInMemoryRepo()
+    const h = build({ walPath, repo })
+    const { clock, exchange, scheduler } = h
+    // BTC minNotional is 5; qty 0.01 × price 100 = 1 < 5 → infeasible → skip.
+    exchange.setPrice(BTC.symbol, 100)
+    exchange.setPrice(ETH.symbol, ETH.price)
+    exchange.setPredictedFunding(BTC.symbol, BTC.predicted, SCAN_TS)
+    exchange.setPredictedFunding(ETH.symbol, ETH.predicted, SCAN_TS)
+    scheduler.start()
+    clock.advanceTo(SCAN_TS)
+    clock.advanceTo(ENTRY_TS)
+
+    const intentId = `${BTC.symbol}-${ENTRY_TS}`
+    expect(h.engine.intentState(intentId)).toBeUndefined()
+    expect(h.wal.readAll()).toHaveLength(0)
+    expect((repo as InMemoryRepo).snapshots().find((s) => s.intentId === intentId)).toBeUndefined()
   })
 })
 

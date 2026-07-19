@@ -33,6 +33,10 @@ export interface RuntimeStrategyConfig {
   readonly holdMs: number
   /** Fixed order quantity, base units (bypasses 0120 sizing in the skeleton). */
   readonly entryQty: number
+  /** Fixed notional per intent, quote currency (`00_globals.md` §4); preflight risk/balance input (real 0120 sizing wiring is 0280). */
+  readonly amountUsd: number
+  /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */
+  readonly leverage: number
 }
 
 /** A module's decision to act on a candidate: the symbol and the settlement it entered against. */

@@ -300,6 +300,9 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
     setPrice(symbol: string, px: number): void {
       normalize(symbol) // reject prices for unknown symbols, fail-loud
       prices.set(symbol, px)
+      // Publish a MarketTick so the engine's preflight has a known price (fail-closed
+      // on unknown price would otherwise skip the symbol — `12` §3).
+      bus.publish({ type: 'MarketTick', symbol, price: px, ts: clock.now() })
     },
     setPredictedFunding(symbol: string, rate: number, ts: number = clock.now()): void {
       const reading: Rate = { symbol, rate, ts }

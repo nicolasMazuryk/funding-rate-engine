@@ -16,7 +16,9 @@ import { createVirtualClock, type VirtualClock } from '../../src/adapters/clock/
 import { createSimExchange, type SimExchange } from '../../src/adapters/sim/sim-exchange.js'
 import { createEventBus } from '../../src/core/events/bus.js'
 import type { EventBus } from '../../src/core/ports/bus.js'
+import type { Balance } from '../../src/core/ports/exchange-adapter.js'
 import type { Repo } from '../../src/core/ports/repo.js'
+import type { RiskGate } from '../../src/core/ports/risk-gate.js'
 import { createEngine, type Engine, type ReconciliationRecord } from '../../src/core/runtime/engine.js'
 import { createScheduler, type Scheduler } from '../../src/core/runtime/scheduler.js'
 import {
@@ -26,6 +28,8 @@ import {
 } from '../../src/core/strategies/registry.js'
 import { createStubStrategy, type StubStrategyConfig } from '../../src/core/strategies/stub.js'
 import { createWalFile, type WalFile } from '../../src/persistence/wal/wal-file.js'
+import { createRiskGate } from '../../src/risk/gate.js'
+import { createKillSwitch, type KillSwitch } from '../../src/risk/kill-switch.js'
 import { createInMemoryRepo } from './in-memory-repo.js'
 import { createLogger } from './logger.js'
 import { createTraceWriter, type TraceWriter } from './trace-writer.js'
@@ -39,7 +43,11 @@ export const DEFAULT_STUB_CONFIG: StubStrategyConfig = {
   entryQty: 0.01,
 }
 
-/** The engine-facing runtime config, derived from {@link DEFAULT_STUB_CONFIG}. */
+/**
+ * The engine-facing runtime config, derived from {@link DEFAULT_STUB_CONFIG}.
+ * `amountUsd: 50` / `leverage: 1` sit comfortably under the 100-notional default
+ * limit, leaving headroom for a stricter-limit test.
+ */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeStrategyConfig = {
   id: DEFAULT_STUB_CONFIG.id,
   thresholdPercent: DEFAULT_STUB_CONFIG.negativeFundingThresholdPercent,
@@ -47,6 +55,8 @@ export const DEFAULT_RUNTIME_CONFIG: RuntimeStrategyConfig = {
   entryOffsetSeconds: DEFAULT_STUB_CONFIG.entryOffsetSeconds,
   holdMs: DEFAULT_STUB_CONFIG.holdMs,
   entryQty: DEFAULT_STUB_CONFIG.entryQty,
+  amountUsd: 50,
+  leverage: 1,
 }
 
 export interface BuildOpts {
@@ -60,7 +70,10 @@ export interface BuildOpts {
   readonly repo?: Repo
   readonly registry?: StrategyRegistry
   readonly strategyConfig?: RuntimeStrategyConfig
-  readonly preflight?: () => boolean
+  readonly riskGate?: RiskGate
+  readonly killSwitch?: KillSwitch
+  readonly initialBalance?: Balance
+  readonly accountSetupComplete?: boolean
   readonly onReconciliation?: (record: ReconciliationRecord) => void
   readonly logger?: Logger
 }
@@ -75,6 +88,7 @@ export interface SkeletonHarness {
   readonly engine: Engine
   readonly registry: StrategyRegistry
   readonly strategyConfig: RuntimeStrategyConfig
+  readonly killSwitch: KillSwitch
   readonly traceWriter?: TraceWriter
   readonly logger: Logger
 }
@@ -89,6 +103,12 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
   const strategyConfig = opts.strategyConfig ?? DEFAULT_RUNTIME_CONFIG
   const logger = opts.logger ?? createLogger({ instance: 'skeleton' })
   const scheduler = createScheduler(clock, bus)
+
+  // Preflight deps. Balance seeded in the harness (not `engine.ts`) so the engine
+  // stays fail-loud with no hidden default; real `main.ts` fetches the live balance.
+  const initialBalance: Balance = opts.initialBalance ?? { asset: 'USDT', free: 10_000, used: 0 }
+  const riskGate = opts.riskGate ?? createRiskGate({ maxConcurrentIntents: 10, maxNotionalUsd: 100 })
+  const killSwitch = opts.killSwitch ?? createKillSwitch({ initial: 'off', clock, wal })
 
   const traceWriter = opts.eventsPath === undefined ? undefined : createTraceWriter({ path: opts.eventsPath })
   if (traceWriter) bus.subscribe((event) => traceWriter.record(event))
@@ -106,9 +126,25 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     repo,
     registry,
     strategyConfig,
-    preflight: opts.preflight,
+    riskGate,
+    killSwitch,
+    initialBalance,
+    accountSetupComplete: opts.accountSetupComplete,
     onReconciliation,
   })
 
-  return { clock, bus, exchange, wal, repo, scheduler, engine, registry, strategyConfig, traceWriter, logger }
+  return {
+    clock,
+    bus,
+    exchange,
+    wal,
+    repo,
+    scheduler,
+    engine,
+    registry,
+    strategyConfig,
+    killSwitch,
+    traceWriter,
+    logger,
+  }
 }

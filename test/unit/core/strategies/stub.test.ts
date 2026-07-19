@@ -18,6 +18,8 @@ const RUNTIME: RuntimeStrategyConfig = {
   entryOffsetSeconds: 90,
   holdMs: 300_000,
   entryQty: 0.01,
+  amountUsd: 50,
+  leverage: 1,
 }
 
 function candidate(ratePercent: number): Candidate {

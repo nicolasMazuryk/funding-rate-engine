@@ -20,6 +20,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { DEV_INSTANCE } from '../../src/persistence/db/instance.js'
 import { createPgRepo } from '../../src/persistence/db/repo.js'
 import { createForwarder } from '../../src/persistence/wal/forwarder.js'
+import { createKillSwitch } from '../../src/risk/kill-switch.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../helpers/build-skeleton-engine.js'
 import { runSkeletonScenario, START_MS, triggeredIntentId } from '../helpers/skeleton-scenario.js'
 
@@ -104,5 +105,37 @@ describe('skeleton end-to-end through Postgres', () => {
       { from_state: 'MONITORING', to_state: 'EXITING' },
       { from_state: 'EXITING', to_state: 'CLOSED' },
     ])
+  })
+
+  it('with the kill switch paused: places no order and persists one ABORTED intent', async () => {
+    const repo = createPgRepo({ pool: newPool(), instance: DEV_INSTANCE })
+    // Kill switch fixed at `paused` with a throwaway WAL, so the harness WAL holds only engine transitions.
+    const killSwitch = createKillSwitch({
+      initial: 'paused',
+      clock: { now: () => 0, scheduleTimer: () => ({ cancel() {} }) },
+      wal: { append: () => Promise.resolve() },
+    })
+    const harness = buildSkeletonEngine({ startMs: START_MS, walPath, repo, killSwitch })
+    harnesses.push(harness)
+    const placeOrder = vi.spyOn(harness.exchange, 'placeOrder')
+    const forwarder = createForwarder({ wal: harness.wal, pool: newPool(), instance: DEV_INSTANCE })
+
+    runSkeletonScenario(harness)
+    const intentId = triggeredIntentId(harness)
+
+    expect(placeOrder).not.toHaveBeenCalled()
+    await vi.waitFor(
+      async () => {
+        const { rows } = await adminPool.query('SELECT state, error_code FROM intents WHERE intent_id = $1', [intentId])
+        expect(rows[0]).toEqual({ state: 'ABORTED', error_code: 'kill_switch' })
+      },
+      { timeout: 5000, interval: 25 },
+    )
+
+    await forwarder.tick()
+    const { rows } = await adminPool.query('SELECT from_state, to_state FROM intent_wal WHERE intent_id = $1', [
+      intentId,
+    ])
+    expect(rows).toEqual([{ from_state: 'SELECTED', to_state: 'ABORTED' }])
   })
 })
