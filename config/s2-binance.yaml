@@ -1,0 +1,27 @@
+# Strategy 2 — Negative Funding LONG, trailing-retracement exit (docs/specs/03_strategy_2.md)
+instance:
+  exchange: binance
+  strategy: s2
+  enabled: true
+
+sizing:
+  amount_usd: 10
+  leverage: 5
+
+strategy_params:
+  negative_funding_threshold_percent: -0.4
+  entry_offset_seconds: 3
+  retracement_pct: 1.0
+  sl_multiplier: 2.0
+  deadline_seconds: 900
+  funding_fee_timeout_seconds: 30
+
+risk:
+  max_concurrent_intents: 1
+  max_notional_usd: 20
+  max_daily_loss_usd: 100
+  breaker_error_threshold: 5
+
+symbols:
+  mode: auto
+  deny: []

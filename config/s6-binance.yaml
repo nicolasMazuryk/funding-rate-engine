@@ -1,0 +1,28 @@
+# Strategy 6 — Post-funding directional, WS-gated entry (docs/specs/07_strategy_6.md)
+instance:
+  exchange: binance
+  strategy: s6
+  enabled: true
+
+sizing:
+  amount_usd: 10        # resolves to mainAmountUsd for S6
+  leverage: 5
+
+strategy_params:
+  main_side: long
+  funding_threshold_percent: 0.1
+  entry_offset_seconds: 3
+  funding_fee_timeout_seconds: 10
+  tp_multiplier: 1.5
+  sl_multiplier: 1.5
+  deadline_seconds: 1800
+
+risk:
+  max_concurrent_intents: 1
+  max_notional_usd: 20
+  max_daily_loss_usd: 100
+  breaker_error_threshold: 5
+
+symbols:
+  mode: auto
+  deny: []

@@ -1,0 +1,29 @@
+# Strategy 4.1a — Post-funding LONG ladder (docs/specs/05_strategy_4_1a.md)
+instance:
+  exchange: binance
+  strategy: s4-1a
+  enabled: true
+
+sizing:
+  amount_usd: 10
+  leverage: 5
+
+strategy_params:
+  negative_funding_threshold_percent: -0.4
+  entry_offset_seconds: 3
+  ladder_count: 5
+  ladder_top_mult: 0.7
+  ladder_bottom_mult: 1.8
+  take_profit_pct: 0.3
+  sl_multiplier: 2.5
+  deadline_seconds: 1800
+
+risk:
+  max_concurrent_intents: 1
+  max_notional_usd: 20
+  max_daily_loss_usd: 100
+  breaker_error_threshold: 5
+
+symbols:
+  mode: auto
+  deny: []

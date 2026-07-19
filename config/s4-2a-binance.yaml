@@ -1,0 +1,27 @@
+# Strategy 4.2a — Post-funding LONG single limit (docs/specs/06_strategy_4_2a.md)
+instance:
+  exchange: binance
+  strategy: s4-2a
+  enabled: true
+
+sizing:
+  amount_usd: 20
+  leverage: 4
+
+strategy_params:
+  negative_funding_threshold_percent: -0.4
+  entry_offset_seconds: 5
+  limit_offset_mult: 0.75
+  take_profit_pct: 0.2
+  sl_multiplier: 1.5
+  deadline_seconds: 60
+
+risk:
+  max_concurrent_intents: 1
+  max_notional_usd: 20
+  max_daily_loss_usd: 100
+  breaker_error_threshold: 5
+
+symbols:
+  mode: auto
+  deny: []

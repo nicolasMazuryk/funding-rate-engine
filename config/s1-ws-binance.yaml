@@ -1,0 +1,24 @@
+# Strategy 1-WS — Negative Funding LONG, funding-fee-event exit (docs/specs/02_strategy_1_ws.md)
+instance:
+  exchange: binance
+  strategy: s1-ws
+  enabled: true
+
+sizing:
+  amount_usd: 10
+  leverage: 5
+
+strategy_params:
+  negative_funding_threshold_percent: -0.4
+  entry_offset_seconds: 3
+  funding_fee_timeout_seconds: 10
+
+risk:
+  max_concurrent_intents: 1
+  max_notional_usd: 20
+  max_daily_loss_usd: 100
+  breaker_error_threshold: 5
+
+symbols:
+  mode: auto
+  deny: []

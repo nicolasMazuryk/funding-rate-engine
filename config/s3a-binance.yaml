@@ -1,0 +1,26 @@
+# Strategy 3a — Negative Funding SHORT, ride the drop (docs/specs/04_strategy_3a.md)
+instance:
+  exchange: binance
+  strategy: s3a
+  enabled: true
+
+sizing:
+  amount_usd: 10
+  leverage: 5
+
+strategy_params:
+  negative_funding_threshold_percent: -0.4
+  entry_offset_seconds: 3
+  stop_loss_percent: 1.0
+  tp_variant_a_multiplier: 1.5
+  deadline_seconds: 900
+
+risk:
+  max_concurrent_intents: 1
+  max_notional_usd: 20
+  max_daily_loss_usd: 100
+  breaker_error_threshold: 5
+
+symbols:
+  mode: auto
+  deny: []
