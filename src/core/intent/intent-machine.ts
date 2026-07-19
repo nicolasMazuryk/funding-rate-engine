@@ -46,6 +46,16 @@ const INTENT_TRANSITIONS = {
   NO_POSITION: [],
 } as const satisfies { readonly [S in IntentState]: readonly IntentState[] }
 
+/**
+ * The terminal intent states (no outgoing transitions), derived from the one
+ * transition table so there is a single source of truth. The Postgres `Repo`
+ * (0080) uses this to select non-terminal intents for crash recovery (`14` §7)
+ * rather than redefining the set.
+ */
+export const TERMINAL_INTENT_STATES: readonly IntentState[] = (
+  Object.keys(INTENT_TRANSITIONS) as readonly IntentState[]
+).filter((state) => INTENT_TRANSITIONS[state].length === 0)
+
 /** `exit_reason` — a position existed and was closed (`00_globals.md` §10.1). */
 export type ExitReason =
   | 'timed'

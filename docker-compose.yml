@@ -1,0 +1,17 @@
+# Local centralized Postgres for the fleet-shared persistence tier (14 §2.1, §3).
+# Integration tests only — the hot path never blocks on this (forwarder is async).
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: funding
+      POSTGRES_PASSWORD: funding
+      POSTGRES_DB: funding_drop
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

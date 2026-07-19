@@ -18,14 +18,33 @@ export type IntentId = string
 /** Intent FSM state. Placeholder string; the closed union lands with the FSM (0040). */
 export type IntentState = string
 
-/** A recovered non-terminal intent (minimal; sharpened by 0040/0370). */
+/**
+ * A recovered/persisted intent snapshot (minimal; sharpened by 0040/0370).
+ *
+ * Required fields (`intentId`, `state`, `symbol`) are the 0040/0070 surface and
+ * stay stable. The optional fields are what the Postgres tier (0080) persists
+ * to the `intents` row; each is absent until its upstream producer exists
+ * (`tSettleMs` scheduler, `configHash` config 0100, `exitReason`/`errorCode`
+ * only on terminal transitions). Downstream tasks (0090, 0370) should treat
+ * this as the current surface, not the final one.
+ */
 export interface IntentSnapshot {
   readonly intentId: IntentId
   readonly state: IntentState
   readonly symbol: string
+  /** Settlement time, epoch ms UTC (`00_globals` §1.2). */
+  readonly tSettleMs?: number
+  /** `00_globals` §10.1, present only for a `CLOSED` intent. */
+  readonly exitReason?: string
+  /** `00_globals` §10.2, present only for a terminal-error intent. */
+  readonly errorCode?: string
+  /** `09` §7 config revision hash. */
+  readonly configHash?: string
 }
 
 export interface Repo {
+  /** Upsert an intent's current state + fields, scoped to the instance (`14` §3). */
+  upsertIntentState(snapshot: IntentSnapshot): Promise<void>
   /** Load intents not in a terminal state, for crash recovery (`14` §7). */
   loadNonTerminalIntents(): Promise<readonly IntentSnapshot[]>
 }
