@@ -26,5 +26,6 @@ export type {
   Side,
   TimeRange,
 } from './exchange-adapter.js'
-export type { IntentId, IntentSnapshot, IntentState, IntentTransition, Repo } from './repo.js'
+export type { IntentId, IntentSnapshot, IntentState, Repo } from './repo.js'
 export type { RiskDecision, RiskGate, RiskIntent } from './risk-gate.js'
+export type { TransitionLog, TransitionLogEntry } from './transition-log.js'

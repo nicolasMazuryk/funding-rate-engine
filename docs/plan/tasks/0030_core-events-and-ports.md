@@ -25,5 +25,5 @@ Keep the union closed and exhaustive — downstream switches rely on `never`-che
 
 ## Verification (definition of done)
 1. `npm run verify` — green; new unit tests cover: bus delivers events in publish order per symbol; multiple subscribers each receive events; exhaustiveness helper compiles.
-2. Add a scratch file in `src/core/` importing `fs` — `npm run lint` fails; revert.
+2. Add a scratch file in `src/core/` importing `fs` — `npm run check` fails; revert.
 3. `src/core/CLAUDE.md` exists and states the import restrictions.
