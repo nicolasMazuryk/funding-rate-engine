@@ -1,4 +1,4 @@
-import type { FundingRate, FundingRateHistory, Ticker } from 'ccxt'
+import type { Balances, FundingRate, FundingRateHistory, Order, Position, Ticker } from 'ccxt'
 import { describe, expect, it } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createBinanceAdapter } from '../../../../../src/adapters/exchanges/binance/adapter.js'
@@ -30,6 +30,18 @@ function makeClient(initial: readonly string[]) {
     },
     fetchTicker(symbol) {
       return Promise.resolve({ symbol, info: {}, last: 100, timestamp: 2_000 } as Ticker)
+    },
+    fetchPositions() {
+      return Promise.resolve([])
+    },
+    fetchBalance() {
+      return Promise.resolve({ info: {} } as Balances)
+    },
+    fetchOrder(id, symbol) {
+      return Promise.resolve({ clientOrderId: id, symbol, info: { symbol }, status: 'open', filled: 0 } as Order)
+    },
+    fetchOpenOrders() {
+      return Promise.resolve([])
     },
   }
   return { client, setStems: (s: string[]) => (stems = s), loads: () => loads }
@@ -140,12 +152,53 @@ describe('createBinanceAdapter', () => {
 
     const order = { symbol: 'BTC', side: 'long', type: 'market', qty: 1, clientOrderId: 'o1' } as const
     expect(() => adapter.placeOrder(order)).toThrow(/NotImplemented: BinanceAdapter.placeOrder — task 0230/)
-    expect(() => adapter.getBalance()).toThrow(/NotImplemented: BinanceAdapter.getBalance — task 0240/)
+    expect(() => adapter.cancelOrder('o1')).toThrow(/NotImplemented: BinanceAdapter.cancelOrder — task 0230/)
     expect(() => adapter.setPositionMode('one_way')).toThrow(/NotImplemented/)
     // Public stream is wired only when ws+bus are injected; absent them it fails loud (not NotImplemented).
     expect(() => adapter.streams.public.subscribe(['BTC'])).toThrow(/public stream requires ws\+bus deps/)
     expect(() => adapter.streams.public.subscribeTicks(['BTC'])).toThrow(/public stream requires ws\+bus deps/)
-    // Private stream is still a 0220 NotImplemented stub.
-    expect(() => adapter.streams.private.subscribe()).toThrow(/NotImplemented: BinanceAdapter/)
+    // Private stream likewise fails loud without wsPrivate+bus (implemented, not a NotImplemented stub).
+    expect(() => adapter.streams.private.subscribe()).toThrow(/private stream requires wsPrivate\+bus deps/)
+  })
+})
+
+describe('createBinanceAdapter — account REST reads (0220)', () => {
+  /** Build a ready adapter over the ['clean-perp-btc'] registry with ccxt overrides applied. */
+  async function withClient(overrides: Partial<BinanceMarketClient>): Promise<ExchangeAdapter> {
+    const clock = createVirtualClock(0)
+    const { client } = makeClient(['clean-perp-btc'])
+    const adapter = createBinanceAdapter({ client: { ...client, ...overrides }, clock })
+    await adapter.init()
+    return adapter
+  }
+
+  it('getPositions maps ccxt positions to canonical symbol + signed side, resolving via info.symbol', async () => {
+    const adapter = await withClient({
+      fetchPositions: () =>
+        Promise.resolve([
+          { symbol: 'BTC/USDT:USDT', info: { symbol: 'BTCUSDT' }, side: 'short', contracts: 3, entryPrice: 60_000 },
+          // Unknown venue symbol → dropped (never guessed).
+          { symbol: 'DOGE/USDT:USDT', info: { symbol: 'DOGEUSDT' }, side: 'long', contracts: 5 },
+        ] as Position[]),
+    })
+    expect(await adapter.getPositions()).toEqual([{ symbol: 'BTC', side: 'short', qty: 3, entryPrice: 60_000 }])
+  })
+
+  it('getBalance reads the USDT quote asset free/used', async () => {
+    const adapter = await withClient({
+      fetchBalance: () =>
+        Promise.resolve({ info: {}, USDT: { free: 1_000, used: 250, total: 1_250 } } as unknown as Balances),
+    })
+    expect(await adapter.getBalance()).toEqual({ asset: 'USDT', free: 1_000, used: 250 })
+  })
+
+  it('getBalance defaults free/used to 0 when the quote asset is absent', async () => {
+    const adapter = await withClient({ fetchBalance: () => Promise.resolve({ info: {} } as Balances) })
+    expect(await adapter.getBalance()).toEqual({ asset: 'USDT', free: 0, used: 0 })
+  })
+
+  it('getOrder throws NotFound for a clientOrderId with no known symbol (0230 populates the map)', async () => {
+    const adapter = await withClient({})
+    await expect(adapter.getOrder('unknown')).rejects.toThrow(/no known symbol for clientOrderId 'unknown'/)
   })
 })

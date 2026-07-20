@@ -22,16 +22,20 @@ import type {
   Order,
   OrderAck,
   OrderRequest,
+  OrderStatus,
   Position,
   PositionMode,
+  PrivateStream,
   PublicStream,
   Rate,
   TimeRange,
 } from '../../../core/ports/exchange-adapter.js'
+import { NotFoundError } from '../../shared/errors.js'
 import type { RateLimiter } from '../../shared/rate-limiter.js'
 import { mapBinanceError } from './error-map.js'
 import type { BinanceMarketClient } from './factory.js'
 import { buildInstrumentRegistry } from './instrument.js'
+import { type BinancePrivateWsClient, createBinancePrivateStream } from './private-stream.js'
 import { type BinanceWsClient, createBinancePublicStream, type TickerReading } from './public-stream.js'
 
 const HOUR_MS = 3_600_000
@@ -45,6 +49,22 @@ const WEIGHT_LOAD_MARKETS = 20
 const WEIGHT_FUNDING = 1
 /** Single-symbol ticker read — the tick REST fallback poll (weight 1, general lane). */
 const WEIGHT_TICKER = 1
+/**
+ * Account-read weights for the private-stream reprime + `getPositions`/`getBalance`/
+ * `getOrder` (0220). Placeholders in the general-lane pattern; real ccxt per-endpoint
+ * weights → SUGGESTIONS (`fetchOpenOrders` is genuinely heavy account-wide).
+ */
+const WEIGHT_POSITIONS = 5
+const WEIGHT_BALANCE = 5
+const WEIGHT_OPEN_ORDERS = 40
+const WEIGHT_GET_ORDER = 1
+
+/**
+ * Quote/settle asset for the linear USDT-perp universe (`10` §3). The account balance the
+ * strategy sizes against is always this asset; the private stream's WS `BalanceUpdate`
+ * carries every wallet asset, but the authoritative REST `getBalance` reports this one.
+ */
+const QUOTE_ASSET = 'USDT'
 
 /** Everything the adapter needs, all injectable so unit tests run offline (`10` §2). */
 export interface BinanceAdapterDeps {
@@ -67,7 +87,14 @@ export interface BinanceAdapterDeps {
    * throws a clear "requires ws+bus" error so 0190/0200 offline tests construct unaffected.
    */
   readonly ws?: BinanceWsClient
-  /** Core event bus the public stream publishes onto (`08` §4). Paired with {@link ws}. */
+  /**
+   * Native private user-data WS client (`factory.ts` `wsPrivate`, credentialed). When
+   * present with {@link bus}, the private stream (0220) is fully wired; when absent,
+   * `streams.private.*` throws a clear "requires wsPrivate+bus" error so the offline
+   * unit tests construct unaffected.
+   */
+  readonly wsPrivate?: BinancePrivateWsClient
+  /** Core event bus the public/private streams publish onto (`08` §4). Paired with {@link ws}/{@link wsPrivate}. */
   readonly bus?: EventBus
 }
 
@@ -94,9 +121,22 @@ function unwiredPublicStream(): PublicStream {
   }
 }
 
+/** Placeholder private stream when `wsPrivate`/`bus` are not injected — every method fails loud. */
+function unwiredPrivateStream(): PrivateStream {
+  const fail = (): never => {
+    throw new Error('BinanceAdapter: private stream requires wsPrivate+bus deps')
+  }
+  return { subscribe: fail, close: fail }
+}
+
 export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter {
-  const { client, clock, limiter, ws, bus } = deps
+  const { client, clock, limiter, ws, wsPrivate, bus } = deps
   const deny = deps.deny ?? []
+
+  // `clientOrderId → venueSymbol`, populated by the private stream's `ORDER_TRADE_UPDATE`
+  // handler so `getOrder` can supply the symbol Binance REST requires. 0230 `placeOrder`
+  // populates it authoritatively at submit time.
+  const clientOrderIdToVenue = new Map<string, string>()
 
   /**
    * Run a general-lane REST read under the limiter, mapping any throw to a typed
@@ -167,6 +207,99 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   }
 
   /**
+   * Resolve a ccxt market's canonical name from its raw venue id (`info.symbol`, e.g.
+   * `BTCUSDT`) via the reverse registry — ccxt's unified `symbol` (`BTC/USDT:USDT`) is not
+   * a registry key. Returns `undefined` for an unknown symbol (dropped, never guessed).
+   */
+  function canonicalOfCcxt(info: unknown): string | undefined {
+    const venue = typeof info === 'object' && info !== null ? (info as { symbol?: unknown }).symbol : undefined
+    return typeof venue === 'string' ? venueToNormalized.get(venue) : undefined
+  }
+
+  /** Map a ccxt order status (+ filled qty) to the engine {@link OrderStatus} (`11` §6). */
+  function ccxtOrderStatus(status: string | undefined, filled: number): OrderStatus {
+    switch (status) {
+      case 'closed':
+        return 'FILLED'
+      case 'canceled':
+        return 'CANCELLED'
+      case 'expired':
+        return 'EXPIRED'
+      case 'rejected':
+        return 'REJECTED'
+      default:
+        // 'open' (and any unexpected value) → OPEN, or PARTIAL once partly filled.
+        return filled > 0 ? 'PARTIAL' : 'OPEN'
+    }
+  }
+
+  /** Map a ccxt order to the port {@link Order}; symbol resolves via the registry, else stays raw. */
+  function toOrder(o: {
+    clientOrderId?: string
+    id?: string
+    info?: unknown
+    symbol?: string
+    side?: string
+    type?: string
+    status?: string
+    average?: number
+    filled?: number
+  }): Order {
+    const filled = o.filled ?? 0
+    return {
+      clientOrderId: o.clientOrderId ?? '',
+      ...(o.id ? { venueOrderId: o.id } : {}),
+      symbol: canonicalOfCcxt(o.info) ?? o.symbol ?? '',
+      side: o.side === 'sell' ? 'short' : 'long',
+      type: o.type === 'limit' ? 'limit' : o.type === 'stop' ? 'stop' : 'market',
+      status: ccxtOrderStatus(o.status, filled),
+      ...(o.average !== undefined && o.average !== null ? { fillPx: o.average } : {}),
+      ...(filled > 0 ? { qty: filled } : {}),
+    }
+  }
+
+  /** Account-wide open positions (private-stream reprime + degraded poll, `11` §7). */
+  async function readPositions(): Promise<Position[]> {
+    const raw = await callGeneral(WEIGHT_POSITIONS, () => client.fetchPositions())
+    const out: Position[] = []
+    for (const p of raw) {
+      const symbol = canonicalOfCcxt(p.info)
+      if (symbol === undefined) continue
+      const contracts = p.contracts ?? 0
+      out.push({
+        symbol,
+        side: p.side === 'short' ? 'short' : 'long',
+        qty: Math.abs(contracts),
+        ...(p.entryPrice !== undefined && p.entryPrice !== null ? { entryPrice: p.entryPrice } : {}),
+      })
+    }
+    return out
+  }
+
+  /** Authoritative quote-asset balance (free/used split) — reprime + preflight (`11` §7). */
+  async function readBalance(): Promise<Balance> {
+    const balances = await callGeneral(WEIGHT_BALANCE, () => client.fetchBalance())
+    const quote = balances[QUOTE_ASSET]
+    return { asset: QUOTE_ASSET, free: quote?.free ?? 0, used: quote?.used ?? 0 }
+  }
+
+  /** Account-wide open orders (private-stream reprime, `11` §7). */
+  async function readOpenOrders(): Promise<Order[]> {
+    const raw = await callGeneral(WEIGHT_OPEN_ORDERS, () => client.fetchOpenOrders())
+    return raw.map((o) => toOrder(o))
+  }
+
+  /** Fill-poll one order by client id. Symbol comes from the stream-maintained map (`11` §6). */
+  async function readOrder(clientOrderId: string): Promise<Order> {
+    const venue = clientOrderIdToVenue.get(clientOrderId)
+    if (venue === undefined) {
+      throw new NotFoundError(`BinanceAdapter.getOrder: no known symbol for clientOrderId '${clientOrderId}'`)
+    }
+    const o = await callGeneral(WEIGHT_GET_ORDER, () => client.fetchOrder(clientOrderId, venue, { clientOrderId }))
+    return toOrder(o)
+  }
+
+  /**
    * The public stream, wired only when both `ws` + `bus` are injected. Absent either,
    * every method throws a clear fail-loud error (the 0190/0200 offline tests never touch
    * streams, so their construction is unaffected).
@@ -184,6 +317,26 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
         })
       : unwiredPublicStream()
 
+  /**
+   * The private user-data stream, wired only when both `wsPrivate` + `bus` are injected.
+   * Absent either, every method fails loud (offline tests never touch it, so their
+   * construction is unaffected). It publishes onto the bus and re-primes via the shared
+   * reconnect FSM using the adapter's own REST account reads.
+   */
+  const privateStream: PrivateStream =
+    wsPrivate && bus
+      ? createBinancePrivateStream({
+          ws: wsPrivate,
+          bus,
+          clock,
+          resolveCanonical: (venue) => venueToNormalized.get(venue),
+          restPositions: readPositions,
+          restBalance: readBalance,
+          restOpenOrders: readOpenOrders,
+          recordOrderSymbol: (clientOrderId, venue) => clientOrderIdToVenue.set(clientOrderId, venue),
+        })
+      : unwiredPrivateStream()
+
   return {
     // ── lifecycle ─────────────────────────────────────────────────────────────
     async init(): Promise<void> {
@@ -193,7 +346,8 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     async close(): Promise<void> {
       reloadHandle?.cancel()
       reloadHandle = undefined
-      if (ws && bus) await publicStream.close() // only the wired stream; the placeholder throws
+      if (ws && bus) await publicStream.close() // only the wired streams; the placeholders throw
+      if (wsPrivate && bus) await privateStream.close()
     },
 
     // ── account setup (trade-side — 0240) ─────────────────────────────────────
@@ -224,14 +378,16 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     cancelOrder(_clientOrderId: string): Promise<void> {
       return notImplemented('cancelOrder', '0230')
     },
-    getOrder(_clientOrderId: string): Promise<Order> {
-      return notImplemented('getOrder', '0230')
+
+    // ── account reads (ccxt REST — private-stream reprime + trackers/preflight) ─
+    getOrder(clientOrderId: string): Promise<Order> {
+      return readOrder(clientOrderId)
     },
     getPositions(): Promise<Position[]> {
-      return notImplemented('getPositions', '0240')
+      return readPositions()
     },
     getBalance(): Promise<Balance> {
-      return notImplemented('getBalance', '0240')
+      return readBalance()
     },
 
     // ── funding (ccxt REST) ───────────────────────────────────────────────────
@@ -250,14 +406,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     // ── streams (native WS — 0210 public / 0220 private) ──────────────────────
     streams: {
       public: publicStream,
-      private: {
-        subscribe(): Promise<void> {
-          return notImplemented('streams.private.subscribe', '0220')
-        },
-        close(): Promise<void> {
-          return notImplemented('streams.private.close', '0220')
-        },
-      },
+      private: privateStream,
     },
   } satisfies ExchangeAdapter
 }
