@@ -75,6 +75,16 @@ Do not reference commands that do not exist yet; add each command in the task th
 ## Errors & failure
 - **Fail loud, fail early.** Instruments, precision, and config are validated at startup; a bad instrument or config aborts the process before any order.
 
+## External docs (Context7)
+
+- **Use Context7 for library/API documentation and anything that can be fetched from internet.** Before writing or reviewing code
+  against a third-party dependency (`ccxt`, Drizzle, Zod, Vitest, Biome, `ws`, `pg`,
+  Docker/Postgres tooling), pull the current docs via the Context7 MCP server rather
+  than relying on recall. Training data goes stale; the venue and ORM APIs move.
+- **When it's required, not optional:** adapter work against exchange SDKs, any version
+  bump, any error message that looks like an API signature change, and any "does this
+  method exist" question. A wrong assumption about a venue SDK is a live-order bug.
+
 ## Conventions
 
 - **Conventional commits, referencing the task ID.** E.g. `feat(core): event bus, ports, purity lint [task 0030]`. One task = one commit (or a small series, each tagged). Never mix tasks.
