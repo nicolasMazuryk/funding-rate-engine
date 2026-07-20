@@ -10,8 +10,8 @@
  * unit test injects a fixture-backed fake and runs fully offline.
  */
 
-import { USDMClient } from 'binance'
-import { binanceusdm, type FundingRate, type FundingRateHistory, type MarketInterface } from 'ccxt'
+import { USDMClient, WebsocketClient } from 'binance'
+import { binanceusdm, type FundingRate, type FundingRateHistory, type MarketInterface, type Ticker } from 'ccxt'
 import type { ParsedEnv } from '../../../config/env.js'
 import type { ExchangeProfile } from '../../../config/exchange-schema.js'
 import type { Clock } from '../../../core/ports/clock.js'
@@ -25,12 +25,16 @@ export interface BinanceMarketClient {
   loadMarkets(): Promise<Record<string, MarketInterface | undefined>>
   fetchFundingRate(symbol: string): Promise<FundingRate>
   fetchFundingRateHistory(symbol: string, since?: number, limit?: number): Promise<FundingRateHistory[]>
+  /** Last-price read for the public-stream tick REST fallback (0210). */
+  fetchTicker(symbol: string): Promise<Ticker>
 }
 
 /** ccxt (metadata/REST) + native (hot-path WS, 0210+) clients for one Binance sub-account. */
 export interface BinanceClients {
   readonly ccxt: BinanceMarketClient
   readonly native: USDMClient
+  /** Native public market-data WS (0210). Credential-free; unused until the adapter wires it. */
+  readonly wsPublic: WebsocketClient
 }
 
 /**
@@ -52,7 +56,9 @@ export function createBinanceClients(_profile: ExchangeProfile, secrets: ParsedE
     options: { defaultType: 'swap', fetchCurrencies: false },
   })
   const native = new USDMClient({ api_key: secrets.apiKey, api_secret: secrets.apiSecret })
-  return { ccxt: ccxtClient, native }
+  // `beautify: true` → the client emits `formattedMessage` events the public stream reads.
+  const wsPublic = new WebsocketClient({ beautify: true })
+  return { ccxt: ccxtClient, native, wsPublic }
 }
 
 /**

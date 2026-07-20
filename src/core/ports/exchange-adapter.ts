@@ -182,8 +182,16 @@ export interface TimeRange {
 
 /** Public market-data stream: predicted funding, last price (`10` §7). */
 export interface PublicStream {
-  /** Subscribe to public feeds for the given normalized symbols. */
+  /**
+   * Subscribe the predicted-funding universe (`FundingPredicted` per symbol). The
+   * Binance impl fans this out over the single all-market mark-price array stream and
+   * publishes only for symbols in this set (`10` §7).
+   */
   subscribe(symbols: readonly string[]): Promise<void>
+  /** Subscribe last-price ticks (`MarketTick`) for the given normalized symbols (shortlist). */
+  subscribeTicks(symbols: readonly string[]): Promise<void>
+  /** Drop last-price ticks for the given normalized symbols; symmetric with {@link subscribeTicks}. */
+  unsubscribeTicks(symbols: readonly string[]): Promise<void>
   close(): Promise<void>
 }
 

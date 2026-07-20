@@ -465,6 +465,14 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
         subscribe(): Promise<void> {
           return Promise.resolve()
         },
+        // Ticks are scripted via `setPrice`; sub/unsub are no-ops so the sim still
+        // satisfies the extended port (real WS routing is the Binance adapter's job).
+        subscribeTicks(): Promise<void> {
+          return Promise.resolve()
+        },
+        unsubscribeTicks(): Promise<void> {
+          return Promise.resolve()
+        },
         close(): Promise<void> {
           return Promise.resolve()
         },

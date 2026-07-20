@@ -1,4 +1,4 @@
-import type { FundingRate, FundingRateHistory } from 'ccxt'
+import type { FundingRate, FundingRateHistory, Ticker } from 'ccxt'
 import { describe, expect, it } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createBinanceAdapter } from '../../../../../src/adapters/exchanges/binance/adapter.js'
@@ -27,6 +27,9 @@ function makeClient(initial: readonly string[]) {
         { info: {}, symbol: _symbol, fundingRate: 0.0003, timestamp: 20_000 },
       ]
       return Promise.resolve(rows)
+    },
+    fetchTicker(symbol) {
+      return Promise.resolve({ symbol, info: {}, last: 100, timestamp: 2_000 } as Ticker)
     },
   }
   return { client, setStems: (s: string[]) => (stems = s), loads: () => loads }
@@ -129,7 +132,7 @@ describe('createBinanceAdapter', () => {
     expect(c.loads()).toBe(1) // no reload after close
   })
 
-  it('trade-side + stream methods are NotImplemented stubs', async () => {
+  it('trade-side stubs are NotImplemented; public stream fails loud without ws+bus deps', async () => {
     const clock = createVirtualClock(0)
     const { client } = makeClient(['clean-perp-btc'])
     const adapter = createBinanceAdapter({ client, clock })
@@ -139,7 +142,10 @@ describe('createBinanceAdapter', () => {
     expect(() => adapter.placeOrder(order)).toThrow(/NotImplemented: BinanceAdapter.placeOrder — task 0230/)
     expect(() => adapter.getBalance()).toThrow(/NotImplemented: BinanceAdapter.getBalance — task 0240/)
     expect(() => adapter.setPositionMode('one_way')).toThrow(/NotImplemented/)
-    expect(() => adapter.streams.public.subscribe(['BTC'])).toThrow(/NotImplemented/)
-    expect(() => adapter.streams.private.subscribe()).toThrow(/NotImplemented/)
+    // Public stream is wired only when ws+bus are injected; absent them it fails loud (not NotImplemented).
+    expect(() => adapter.streams.public.subscribe(['BTC'])).toThrow(/public stream requires ws\+bus deps/)
+    expect(() => adapter.streams.public.subscribeTicks(['BTC'])).toThrow(/public stream requires ws\+bus deps/)
+    // Private stream is still a 0220 NotImplemented stub.
+    expect(() => adapter.streams.private.subscribe()).toThrow(/NotImplemented: BinanceAdapter/)
   })
 })
