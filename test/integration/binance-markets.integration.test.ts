@@ -22,6 +22,7 @@ const PROFILE: ExchangeProfile = {
   makerFeePct: 0.02,
   submissionStaggerMs: 250,
   rateLimitReservePct: 10,
+  rateLimitWeightPerMinute: 2400,
   wsOrderAdapter: true,
   ws: { publicUrl: 'wss://fstream.binance.com/ws', privateUrl: 'wss://fstream.binance.com/ws' },
   deltas: {},

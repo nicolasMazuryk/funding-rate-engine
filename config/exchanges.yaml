@@ -8,12 +8,17 @@
 # WS URLs are best-effort real per-venue endpoints, inert until an adapter reads
 # them (0190 for Binance; 0420–0460 for the rest). Correctable when each adapter
 # is built and its venue team reviews.
+#
+# rate_limit_weight_per_minute sizes the token bucket (task 0200). Binance 2400 is
+# the published fapi request-weight/min; the other five are 2400 placeholders,
+# correctable per-venue at 0420–0460.
 
 binance:
   taker_fee_pct: 0.05
   maker_fee_pct: 0.02
   submission_stagger_ms: 100
   rate_limit_reserve_pct: 10
+  rate_limit_weight_per_minute: 2400 # published fapi request-weight/min (limiter bucket, task 0200)
   ws_order_adapter: true
   ws:
     public_url: wss://fstream.binance.com/ws
@@ -25,6 +30,7 @@ bybit:
   maker_fee_pct: 0.02
   submission_stagger_ms: 150 # 00_globals §6 — Bybit serializes at 150 ms
   rate_limit_reserve_pct: 10
+  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
   ws_order_adapter: true
   ws:
     public_url: wss://stream.bybit.com/v5/public/linear
@@ -37,6 +43,7 @@ okx:
   maker_fee_pct: 0.02
   submission_stagger_ms: 100
   rate_limit_reserve_pct: 10
+  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
   ws_order_adapter: true
   ws:
     public_url: wss://ws.okx.com:8443/ws/v5/public
@@ -51,6 +58,7 @@ bitget:
   maker_fee_pct: 0.02
   submission_stagger_ms: 100
   rate_limit_reserve_pct: 10
+  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
   ws_order_adapter: true
   ws:
     public_url: wss://ws.bitget.com/v2/ws/public
@@ -62,6 +70,7 @@ gateio:
   maker_fee_pct: 0.02
   submission_stagger_ms: 100
   rate_limit_reserve_pct: 10
+  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
   ws_order_adapter: true
   ws:
     public_url: wss://fx-ws.gateio.ws/v4/ws/usdt
@@ -73,6 +82,7 @@ kucoin:
   maker_fee_pct: 0.02
   submission_stagger_ms: 100
   rate_limit_reserve_pct: 10
+  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
   ws_order_adapter: true
   ws:
     public_url: wss://ws-api-futures.kucoin.com/endpoint

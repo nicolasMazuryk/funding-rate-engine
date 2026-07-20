@@ -14,6 +14,8 @@ import { USDMClient } from 'binance'
 import { binanceusdm, type FundingRate, type FundingRateHistory, type MarketInterface } from 'ccxt'
 import type { ParsedEnv } from '../../../config/env.js'
 import type { ExchangeProfile } from '../../../config/exchange-schema.js'
+import type { Clock } from '../../../core/ports/clock.js'
+import { budgetToLimiterArgs, createRateLimiter, type RateLimiter } from '../../shared/rate-limiter.js'
 
 /**
  * The slice of ccxt the adapter actually calls — market metadata + funding REST.
@@ -51,4 +53,17 @@ export function createBinanceClients(_profile: ExchangeProfile, secrets: ParsedE
   })
   const native = new USDMClient({ api_key: secrets.apiKey, api_secret: secrets.apiSecret })
   return { ccxt: ccxtClient, native }
+}
+
+/**
+ * Build the per-exchange weighted rate limiter from the venue profile budget (`10` §6).
+ * A helper, not wired at construction — there is no `main.ts` yet, so composition stays
+ * injectable: the caller passes the returned limiter into `createBinanceAdapter({ limiter })`.
+ */
+export function createBinanceRateLimiter(profile: ExchangeProfile, clock: Clock): RateLimiter {
+  const args = budgetToLimiterArgs({
+    weightPerMinute: profile.rateLimitWeightPerMinute,
+    reservePct: profile.rateLimitReservePct,
+  })
+  return createRateLimiter({ ...args, clock })
 }

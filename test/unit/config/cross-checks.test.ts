@@ -13,6 +13,7 @@ function profile(wsOrderAdapter: boolean): ExchangeProfile {
     makerFeePct: 0.02,
     submissionStaggerMs: 100,
     rateLimitReservePct: 10,
+    rateLimitWeightPerMinute: 2400,
     wsOrderAdapter,
     ws: { publicUrl: 'wss://x', privateUrl: 'wss://x' },
     deltas: {},

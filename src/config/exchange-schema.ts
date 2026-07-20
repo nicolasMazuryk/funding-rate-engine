@@ -40,6 +40,9 @@ export const ExchangeProfileYamlSchema = z
     maker_fee_pct: z.number(),
     submission_stagger_ms: z.int().gt(0),
     rate_limit_reserve_pct: z.number().gte(0).lte(100),
+    // Total request-weight budget per minute — the token bucket's size (`10` §6:
+    // "sized from the venue's published limits"). Owned by the limiter (task 0200).
+    rate_limit_weight_per_minute: z.int().gt(0),
     ws_order_adapter: z.boolean(),
     ws: z
       .object({
@@ -72,6 +75,7 @@ export interface ExchangeProfile {
   readonly makerFeePct: number
   readonly submissionStaggerMs: number
   readonly rateLimitReservePct: number
+  readonly rateLimitWeightPerMinute: number
   readonly wsOrderAdapter: boolean
   readonly ws: { readonly publicUrl: string; readonly privateUrl: string }
   readonly deltas: ExchangeDelta
@@ -86,6 +90,7 @@ function toProfile(p: ProfileYaml): ExchangeProfile {
     makerFeePct: p.maker_fee_pct,
     submissionStaggerMs: p.submission_stagger_ms,
     rateLimitReservePct: p.rate_limit_reserve_pct,
+    rateLimitWeightPerMinute: p.rate_limit_weight_per_minute,
     wsOrderAdapter: p.ws_order_adapter,
     ws: { publicUrl: p.ws.public_url, privateUrl: p.ws.private_url },
     deltas: {

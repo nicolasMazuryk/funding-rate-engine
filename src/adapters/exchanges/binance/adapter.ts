@@ -26,10 +26,20 @@ import type {
   Rate,
   TimeRange,
 } from '../../../core/ports/exchange-adapter.js'
+import type { RateLimiter } from '../../shared/rate-limiter.js'
+import { mapBinanceError } from './error-map.js'
 import type { BinanceMarketClient } from './factory.js'
 import { buildInstrumentRegistry } from './instrument.js'
 
 const HOUR_MS = 3_600_000
+
+/**
+ * General-lane weights (`10` §6). `loadMarkets` pulls the full exchangeInfo payload so
+ * it is heavier; the funding reads are single-symbol REST — weight 1. Placeholders
+ * correctable when ccxt-reported per-endpoint weights are wired.
+ */
+const WEIGHT_LOAD_MARKETS = 20
+const WEIGHT_FUNDING = 1
 
 /** Everything the adapter needs, all injectable so unit tests run offline (`10` §2). */
 export interface BinanceAdapterDeps {
@@ -39,6 +49,13 @@ export interface BinanceAdapterDeps {
   readonly clock: Clock
   /** Canonical names to exclude from the universe (`config.symbols.deny`, `10` §3). */
   readonly deny?: readonly string[]
+  /**
+   * Weighted rate limiter (task 0200). When present, the three REST reads draw the
+   * **general** lane and their throws map through {@link mapBinanceError}; when absent
+   * the reads pass through raw (keeps 0190's offline unit tests unchanged). The order
+   * lane is wired into `placeOrder`/`cancelOrder` at 0230.
+   */
+  readonly limiter?: RateLimiter
 }
 
 /** ccxt reports funding as a fraction (`0.0001`); the engine speaks signed percent (`0.01`). */
@@ -52,8 +69,23 @@ function notImplemented(method: string, task: string): never {
 }
 
 export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter {
-  const { client, clock } = deps
+  const { client, clock, limiter } = deps
   const deny = deps.deny ?? []
+
+  /**
+   * Run a general-lane REST read under the limiter, mapping any throw to a typed
+   * {@link mapBinanceError} error. No limiter → passthrough (raw call, raw throw), so
+   * the 0190 offline tests are unaffected.
+   */
+  async function callGeneral<T>(weight: number, fn: () => Promise<T>): Promise<T> {
+    if (!limiter) return fn()
+    await limiter.acquire(weight, 'general')
+    try {
+      return await fn()
+    } catch (err) {
+      throw mapBinanceError(err)
+    }
+  }
 
   // Swapped atomically on every (re)load — readers never see a half-built registry.
   let instruments = new Map<string, Instrument>()
@@ -61,7 +93,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
 
   /** Load + validate markets into a fresh registry, then swap the reference in. */
   async function reloadRegistry(): Promise<void> {
-    const markets = await client.loadMarkets()
+    const markets = await callGeneral(WEIGHT_LOAD_MARKETS, () => client.loadMarkets())
     instruments = buildInstrumentRegistry(Object.values(markets), deny)
   }
 
@@ -139,11 +171,13 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
 
     // ── funding (ccxt REST) ───────────────────────────────────────────────────
     async predictedFunding(symbol: string): Promise<Rate> {
-      const fr = await client.fetchFundingRate(venueSymbol(symbol))
+      const fr = await callGeneral(WEIGHT_FUNDING, () => client.fetchFundingRate(venueSymbol(symbol)))
       return { symbol, rate: toSignedPercent(fr.fundingRate), ts: fr.timestamp ?? clock.now() }
     },
     async fundingHistory(symbol: string, range: TimeRange): Promise<FundingEvent[]> {
-      const rows = await client.fetchFundingRateHistory(venueSymbol(symbol), range.fromTs)
+      const rows = await callGeneral(WEIGHT_FUNDING, () =>
+        client.fetchFundingRateHistory(venueSymbol(symbol), range.fromTs),
+      )
       return rows
         .filter((r) => r.timestamp !== undefined && r.timestamp >= range.fromTs && r.timestamp <= range.toTs)
         .map((r) => ({ symbol, rate: toSignedPercent(r.fundingRate), settleTs: r.timestamp as number }))
