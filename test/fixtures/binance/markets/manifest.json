@@ -1,0 +1,22 @@
+{
+  "capturedAtMs": 1784577450339,
+  "count": 3,
+  "network": "prod",
+  "set": "markets",
+  "source": "ccxt.binanceusdm#loadMarkets (public futures exchangeInfo)",
+  "synthetic": [
+    "spot-btc",
+    "inverse-coinm",
+    "dated-expiry",
+    "delisted",
+    "funding-4h",
+    "anomaly-bad-funding",
+    "anomaly-missing-precision",
+    "anomaly-zero-contractsize",
+    "multiplier-cat",
+    "plain-cat",
+    "multiplier-mog"
+  ],
+  "toolVersion": "1",
+  "venue": "binance"
+}

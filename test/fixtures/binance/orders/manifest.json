@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1784577117446,
+  "count": 3,
+  "network": "testnet",
+  "set": "orders",
+  "source": "WebsocketAPIClient submit/cancel + ccxt fetchOrder — one far-from-market limit, immediately cancelled",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "binance"
+}

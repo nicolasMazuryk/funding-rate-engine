@@ -11,37 +11,16 @@ import {
 import type { EngineEvent } from '../../../../../src/core/events/types.js'
 import type { EventBus } from '../../../../../src/core/ports/bus.js'
 import type { Rate } from '../../../../../src/core/ports/exchange-adapter.js'
+import { CAPTURED_AGG_TRADE, CAPTURED_MARK_PRICE } from './ws-fixtures.js'
 
-// ── Synthetic fixtures (capture tool is 0250; inline until then) ──────────────
+// ── Captured-base fixtures (task 0250) — defaults from a real venue frame ──────
 
 function markPriceEntry(overrides: Partial<WsMessageMarkPriceEventFormatted>): WsMessageMarkPriceEventFormatted {
-  return {
-    eventType: 'markPriceUpdate',
-    eventTime: 1_700_000_000_000,
-    symbol: 'BTCUSDT',
-    markPrice: 60_000,
-    settlePriceEstimate: 60_000,
-    fundingRate: 0.0001,
-    nextFundingTime: 1_700_003_600_000,
-    ...overrides,
-  } as WsMessageMarkPriceEventFormatted
+  return { ...CAPTURED_MARK_PRICE, ...overrides } as WsMessageMarkPriceEventFormatted
 }
 
 function aggTrade(overrides: Partial<WsMessageAggTradeFormatted>): WsMessageAggTradeFormatted {
-  return {
-    eventType: 'aggTrade',
-    eventTime: 1_700_000_000_500,
-    symbol: 'BTCUSDT',
-    tradeId: 1,
-    price: 60_050,
-    quantity: 0.5,
-    firstTradeId: 1,
-    lastTradeId: 1,
-    time: 1_700_000_000_500,
-    maker: false,
-    ignored: false,
-    ...overrides,
-  } as WsMessageAggTradeFormatted
+  return { ...CAPTURED_AGG_TRADE, ...overrides } as WsMessageAggTradeFormatted
 }
 
 // Registry: venue id → canonical, folding the 1000-multiplier like the real adapter.

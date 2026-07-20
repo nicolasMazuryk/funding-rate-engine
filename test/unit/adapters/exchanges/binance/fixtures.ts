@@ -1,8 +1,10 @@
 /**
- * Hand-captured ccxt market payload loader for the Binance adapter unit tests.
- * JSON is read at call time (no `resolveJsonModule`) and cast to the ccxt shape —
- * the adapter code tolerates ccxt's `null`-for-absent fields, which is exactly what
- * these fixtures exercise. The real capture tool lands in task 0250.
+ * ccxt market payload loader for the Binance adapter unit tests. Fixtures live under
+ * `test/fixtures/binance/markets/` — a mix of `npm run capture`-generated (clean perp,
+ * 1000x multiplier) and hand-authored synthetic (see that dir's `manifest.json`
+ * `synthetic` list) JSON, task 0250. JSON is read at call time (no `resolveJsonModule`)
+ * and cast to the ccxt shape — the adapter code tolerates ccxt's `null`-for-absent
+ * fields, which is exactly what these fixtures exercise.
  */
 
 import { readFileSync } from 'node:fs'
@@ -11,7 +13,7 @@ import type { MarketInterface } from 'ccxt'
 
 /** Load one fixture market by file stem (e.g. `clean-perp-btc`). */
 export function loadMarket(stem: string): MarketInterface {
-  const url = new URL(`./fixtures/${stem}.json`, import.meta.url)
+  const url = new URL(`../../../../fixtures/binance/markets/${stem}.json`, import.meta.url)
   return JSON.parse(readFileSync(fileURLToPath(url), 'utf8')) as MarketInterface
 }
 

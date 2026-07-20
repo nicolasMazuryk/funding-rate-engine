@@ -1,0 +1,67 @@
+{
+  "id": 1,
+  "rateLimits": [
+    {
+      "count": -1,
+      "interval": "MINUTE",
+      "intervalNum": 1,
+      "limit": -1,
+      "rateLimitType": "REQUEST_WEIGHT"
+    },
+    {
+      "count": 1,
+      "interval": "SECOND",
+      "intervalNum": 10,
+      "limit": 300,
+      "rateLimitType": "ORDERS"
+    },
+    {
+      "count": 1,
+      "interval": "MINUTE",
+      "intervalNum": 1,
+      "limit": 1200,
+      "rateLimitType": "ORDERS"
+    }
+  ],
+  "request": {
+    "id": 1,
+    "method": "order.place",
+    "params": {
+      "newClientOrderId": "3",
+      "newOrderRespType": "RESULT",
+      "price": "20000",
+      "quantity": "0.003",
+      "side": "BUY",
+      "symbol": "BTCUSDT",
+      "timeInForce": "GTC",
+      "timestamp": 1700000001000,
+      "type": "LIMIT"
+    }
+  },
+  "result": {
+    "clientOrderId": "3",
+    "closePosition": false,
+    "cumQty": "0.0000",
+    "executedQty": "0.0000",
+    "goodTillDate": 0,
+    "orderId": 2,
+    "origQty": "0.0030",
+    "origType": "LIMIT",
+    "positionSide": "BOTH",
+    "price": "20000.00",
+    "priceMatch": "NONE",
+    "priceProtect": false,
+    "reduceOnly": false,
+    "selfTradePreventionMode": "EXPIRE_MAKER",
+    "side": "BUY",
+    "status": "NEW",
+    "stopPrice": "0.00",
+    "symbol": "BTCUSDT",
+    "timeInForce": "GTC",
+    "type": "LIMIT",
+    "updateTime": 1700000000000,
+    "workingType": "CONTRACT_PRICE"
+  },
+  "status": 200,
+  "wsMarket": "usdmTestnet"
+}

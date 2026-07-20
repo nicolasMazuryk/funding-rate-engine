@@ -1,0 +1,129 @@
+{
+  "active": true,
+  "base": "1000PEPE",
+  "baseId": "1000PEPE",
+  "contract": true,
+  "contractSize": 1,
+  "created": 1683244800000,
+  "feeSide": "get",
+  "future": false,
+  "id": "1000PEPEUSDT",
+  "info": {
+    "baseAsset": "1000PEPE",
+    "baseAssetPrecision": 8,
+    "contractType": "PERPETUAL",
+    "deliveryDate": 4133404800000,
+    "filters": [
+      {
+        "filterType": "PRICE_FILTER",
+        "maxPrice": "200",
+        "minPrice": "0.0000001",
+        "tickSize": "0.0000001"
+      },
+      {
+        "filterType": "LOT_SIZE",
+        "maxQty": "800000000",
+        "minQty": "1",
+        "stepSize": "1"
+      },
+      {
+        "filterType": "MARKET_LOT_SIZE",
+        "maxQty": "100000000",
+        "minQty": "1",
+        "stepSize": "1"
+      },
+      {
+        "filterType": "MAX_NUM_ORDERS",
+        "limit": 200
+      },
+      {
+        "filterType": "MIN_NOTIONAL",
+        "notional": "5"
+      },
+      {
+        "filterType": "PERCENT_PRICE",
+        "multiplierDecimal": "4",
+        "multiplierDown": "0.8500",
+        "multiplierUp": "1.1500"
+      },
+      {
+        "filterType": "POSITION_RISK_CONTROL",
+        "positionControlSide": "NONE"
+      }
+    ],
+    "liquidationFee": "0.015000",
+    "maintMarginPercent": "2.5000",
+    "marginAsset": "USDT",
+    "marketTakeBound": "0.15",
+    "maxMoveOrderLimit": 10000,
+    "onboardDate": 1683244800000,
+    "orderTypes": [
+      "LIMIT",
+      "MARKET",
+      "STOP",
+      "STOP_MARKET",
+      "TAKE_PROFIT",
+      "TAKE_PROFIT_MARKET",
+      "TRAILING_STOP_MARKET"
+    ],
+    "pair": "1000PEPEUSDT",
+    "permissionSets": ["GRID", "COPY", "RPI", "DCA", "PSB"],
+    "pricePrecision": 7,
+    "quantityPrecision": 0,
+    "quoteAsset": "USDT",
+    "quotePrecision": 8,
+    "requiredMarginPercent": "5.0000",
+    "status": "TRADING",
+    "symbol": "1000PEPEUSDT",
+    "timeInForce": ["GTC", "IOC", "FOK", "GTX", "GTD"],
+    "triggerProtect": "0.1500",
+    "underlyingSubType": ["Meme"],
+    "underlyingType": "COIN"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 800000000,
+      "min": 1
+    },
+    "cost": {
+      "min": 5
+    },
+    "leverage": {},
+    "market": {
+      "max": 100000000,
+      "min": 1
+    },
+    "price": {
+      "max": 200,
+      "min": 1e-7
+    }
+  },
+  "linear": true,
+  "lowercaseId": "1000pepeusdt",
+  "maker": 0.0002,
+  "margin": false,
+  "marginModes": {
+    "cross": true,
+    "isolated": true
+  },
+  "option": false,
+  "percentage": true,
+  "precision": {
+    "amount": 1,
+    "base": 1e-8,
+    "price": 1e-7,
+    "quote": 1e-8
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "1000PEPE/USDT:USDT",
+  "taker": 0.0005,
+  "tierBased": false,
+  "type": "swap"
+}

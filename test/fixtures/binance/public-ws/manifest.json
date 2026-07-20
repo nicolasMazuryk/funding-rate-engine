@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1784576566350,
+  "count": 6,
+  "network": "prod",
+  "set": "public-ws",
+  "source": "binance WebsocketClient formattedMessage — !markPrice@arr@1s + BTC@aggTrade",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "binance"
+}

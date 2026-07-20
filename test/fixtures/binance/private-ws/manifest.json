@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1784576939692,
+  "count": 2,
+  "network": "testnet",
+  "set": "private-ws",
+  "source": "binance WebsocketClient formattedUserDataMessage (USD-M user-data stream)",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "binance"
+}

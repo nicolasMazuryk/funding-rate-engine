@@ -53,7 +53,7 @@ describe('ccxtMarketToInstrument denomination', () => {
       contractSize: 1,
       pricePrecision: 0.1,
       amountPrecision: 0.001,
-      minNotional: 5,
+      minNotional: 50,
       minQty: 0.001,
       fundingIntervalHours: 8,
     })

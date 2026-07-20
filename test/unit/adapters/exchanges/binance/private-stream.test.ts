@@ -15,8 +15,11 @@ import {
 import type { EngineEvent } from '../../../../../src/core/events/types.js'
 import type { EventBus } from '../../../../../src/core/ports/bus.js'
 import type { Balance, Order, Position } from '../../../../../src/core/ports/exchange-adapter.js'
+import { CAPTURED_ORDER_TRADE_UPDATE_ORDER } from './ws-fixtures.js'
 
-// ── Synthetic lib-typed fixtures (capture tool is 0250; inline until then) ────
+// ── Captured-base (`order`, task 0250) + hand-authored account-update fixtures ─
+// `ACCOUNT_UPDATE` never fired during capture (no live balance/position change in the
+// window), so `accountUpdate`/`position`/`balance` below stay hand-authored (synthetic).
 
 function orderTradeUpdate(
   order: Partial<WsMessageFuturesUserDataTradeUpdateEventFormatted['order']>,
@@ -28,17 +31,7 @@ function orderTradeUpdate(
     eventType: 'ORDER_TRADE_UPDATE',
     eventTime: 1_700_000_000_000,
     transactionTime: 1_700_000_000_010,
-    order: {
-      symbol: 'BTCUSDT',
-      clientOrderId: 'o1',
-      orderSide: 'BUY',
-      orderType: 'LIMIT',
-      orderStatus: 'NEW',
-      averagePrice: 0,
-      orderFilledAccumulatedQuantity: 0,
-      lastFilledPrice: 0,
-      ...order,
-    },
+    order: { ...CAPTURED_ORDER_TRADE_UPDATE_ORDER, clientOrderId: 'o1', ...order },
   } as WsMessageFuturesUserDataTradeUpdateEventFormatted
 }
 

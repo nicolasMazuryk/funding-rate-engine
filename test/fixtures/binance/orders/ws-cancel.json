@@ -1,0 +1,47 @@
+{
+  "id": 4,
+  "rateLimits": [
+    {
+      "count": 7,
+      "interval": "MINUTE",
+      "intervalNum": 1,
+      "limit": 6000,
+      "rateLimitType": "REQUEST_WEIGHT"
+    }
+  ],
+  "request": {
+    "id": 4,
+    "method": "order.cancel",
+    "params": {
+      "origClientOrderId": "3",
+      "symbol": "BTCUSDT",
+      "timestamp": 1700000003000
+    }
+  },
+  "result": {
+    "clientOrderId": "3",
+    "closePosition": false,
+    "cumQty": "0.0000",
+    "executedQty": "0.0000",
+    "goodTillDate": 0,
+    "orderId": 2,
+    "origQty": "0.0030",
+    "origType": "LIMIT",
+    "positionSide": "BOTH",
+    "price": "20000.00",
+    "priceMatch": "NONE",
+    "priceProtect": false,
+    "reduceOnly": false,
+    "selfTradePreventionMode": "EXPIRE_MAKER",
+    "side": "BUY",
+    "status": "CANCELED",
+    "stopPrice": "0.00",
+    "symbol": "BTCUSDT",
+    "timeInForce": "GTC",
+    "type": "LIMIT",
+    "updateTime": 1700000002000,
+    "workingType": "CONTRACT_PRICE"
+  },
+  "status": 200,
+  "wsMarket": "usdmTestnet"
+}

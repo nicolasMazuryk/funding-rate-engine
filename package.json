@@ -9,6 +9,7 @@
   "scripts": {
     "start": "node src/main.ts",
     "replay": "node --experimental-transform-types --import ./scripts/register-ts.mjs scripts/replay.ts",
+    "capture": "node --experimental-transform-types --import ./scripts/register-ts.mjs scripts/capture.ts",
     "typecheck": "tsc --noEmit",
     "check": "biome check .",
     "format": "biome check --write .",
