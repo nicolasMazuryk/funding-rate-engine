@@ -30,13 +30,16 @@ import type {
   Rate,
   TimeRange,
 } from '../../../core/ports/exchange-adapter.js'
-import { NotFoundError } from '../../shared/errors.js'
+import { createOrderManager, type OrderManager } from '../../../execution/order-manager.js'
+import type { ConsecutiveFailureCounter } from '../../shared/errors.js'
+import { createConsecutiveFailureCounter, NotFoundError } from '../../shared/errors.js'
 import type { RateLimiter } from '../../shared/rate-limiter.js'
 import { mapBinanceError } from './error-map.js'
 import type { BinanceMarketClient } from './factory.js'
 import { buildInstrumentRegistry } from './instrument.js'
 import { type BinancePrivateWsClient, createBinancePrivateStream } from './private-stream.js'
 import { type BinanceWsClient, createBinancePublicStream, type TickerReading } from './public-stream.js'
+import { type BinanceRestOrderClient, type BinanceWsOrderClient, createBinanceOrderTransport } from './ws-orders.js'
 
 const HOUR_MS = 3_600_000
 
@@ -96,6 +99,20 @@ export interface BinanceAdapterDeps {
   readonly wsPrivate?: BinancePrivateWsClient
   /** Core event bus the public/private streams publish onto (`08` §4). Paired with {@link ws}/{@link wsPrivate}. */
   readonly bus?: EventBus
+  /**
+   * Native WS-API order client (`factory.ts` `wsApiPrivate`, credentialed). Present with
+   * {@link restOrders} + {@link bus} → the WS-first order path (0230) is wired; absent any
+   * of the three, `placeOrder`/`cancelOrder` fail loud (offline unit tests unaffected).
+   */
+  readonly wsApiPrivate?: BinanceWsOrderClient
+  /** Native REST order client (`factory.ts` `native`, `USDMClient`) — the WS-timeout REST fallback (`11` §5). */
+  readonly restOrders?: BinanceRestOrderClient
+  /** Per-venue submission stagger, ms (`00_globals` §6; Binance 100). Threaded from the venue profile. */
+  readonly submissionStaggerMs?: number
+  /** Whether a WS-timeout falls back to REST (venue delta `ws_order_rest_fallback`; Binance `false`). */
+  readonly wsOrderRestFallback?: boolean
+  /** Shared breaker observer (0200): the order manager's fill-poll `getOrder` errors feed it. */
+  readonly failures?: ConsecutiveFailureCounter
 }
 
 /** ccxt reports funding as a fraction (`0.0001`); the engine speaks signed percent (`0.01`). */
@@ -130,8 +147,9 @@ function unwiredPrivateStream(): PrivateStream {
 }
 
 export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter {
-  const { client, clock, limiter, ws, wsPrivate, bus } = deps
+  const { client, clock, limiter, ws, wsPrivate, bus, wsApiPrivate, restOrders } = deps
   const deny = deps.deny ?? []
+  const failures = deps.failures ?? createConsecutiveFailureCounter()
 
   // `clientOrderId → venueSymbol`, populated by the private stream's `ORDER_TRADE_UPDATE`
   // handler so `getOrder` can supply the symbol Binance REST requires. 0230 `placeOrder`
@@ -146,6 +164,22 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   async function callGeneral<T>(weight: number, fn: () => Promise<T>): Promise<T> {
     if (!limiter) return fn()
     await limiter.acquire(weight, 'general')
+    try {
+      return await fn()
+    } catch (err) {
+      throw mapBinanceError(err)
+    }
+  }
+
+  /**
+   * Run an order-lane venue call: draw the reserved order lane (never starved by the
+   * general poll, `10` §6) and map any throw to a typed {@link mapBinanceError}. Unlike
+   * {@link callGeneral} it **always** maps (no limiter → still map), since the order
+   * manager relies on seeing only {@link AdapterError}s; the order lane throws
+   * `RateLimitedError` immediately when exhausted (no queue).
+   */
+  async function callOrder<T>(weight: number, fn: () => Promise<T>): Promise<T> {
+    if (limiter) await limiter.acquire(weight, 'order')
     try {
       return await fn()
     } catch (err) {
@@ -337,6 +371,51 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
         })
       : unwiredPrivateStream()
 
+  /** Venue symbol for a known `clientOrderId` (cancel path); fail-loud if unseen. */
+  function venueForClientId(clientOrderId: string): string {
+    const venue = clientOrderIdToVenue.get(clientOrderId)
+    if (venue === undefined) {
+      throw new NotFoundError(`BinanceAdapter: no known symbol for clientOrderId '${clientOrderId}'`)
+    }
+    return venue
+  }
+
+  /**
+   * The WS-first order manager, wired only when the WS-API order client, REST order
+   * client, and bus are all injected. Absent any, `placeOrder`/`cancelOrder` fail loud
+   * (offline unit tests never touch them). The transport records `clientOrderId →
+   * venueSymbol` authoritatively at submit time — unblocking `getOrder`/`cancel`.
+   */
+  const orderManager: OrderManager | undefined =
+    wsApiPrivate && restOrders && bus
+      ? createOrderManager({
+          transport: createBinanceOrderTransport({
+            wsApi: wsApiPrivate,
+            rest: restOrders,
+            clock,
+            resolveVenue: venueSymbol,
+            recordVenue: (clientOrderId, venue) => clientOrderIdToVenue.set(clientOrderId, venue),
+            venueForClientId,
+            getOrder: readOrder,
+            callOrder,
+          }),
+          clock,
+          bus,
+          resolveInstrument: normalize,
+          staggerMs: deps.submissionStaggerMs ?? 0,
+          wsOrderRestFallback: deps.wsOrderRestFallback ?? false,
+          failures,
+        })
+      : undefined
+
+  /** Fail loud when the order path is not wired (mirrors the unwired-stream placeholders). */
+  function requireOrderManager(): OrderManager {
+    if (!orderManager) {
+      throw new Error('BinanceAdapter: order path requires wsApiPrivate + restOrders + bus deps')
+    }
+    return orderManager
+  }
+
   return {
     // ── lifecycle ─────────────────────────────────────────────────────────────
     async init(): Promise<void> {
@@ -346,6 +425,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     async close(): Promise<void> {
       reloadHandle?.cancel()
       reloadHandle = undefined
+      orderManager?.dispose() // stop reacting to the bus (idempotent if never wired)
       if (ws && bus) await publicStream.close() // only the wired streams; the placeholders throw
       if (wsPrivate && bus) await privateStream.close()
     },
@@ -371,12 +451,12 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     },
     normalize,
 
-    // ── orders (native WS-first — 0230) ───────────────────────────────────────
-    placeOrder(_req: OrderRequest): Promise<OrderAck> {
-      return notImplemented('placeOrder', '0230')
+    // ── orders (native WS-first, REST fallback — 0230) ────────────────────────
+    placeOrder(req: OrderRequest): Promise<OrderAck> {
+      return requireOrderManager().placeOrder(req)
     },
-    cancelOrder(_clientOrderId: string): Promise<void> {
-      return notImplemented('cancelOrder', '0230')
+    cancelOrder(clientOrderId: string): Promise<void> {
+      return requireOrderManager().cancelOrder(clientOrderId)
     },
 
     // ── account reads (ccxt REST — private-stream reprime + trackers/preflight) ─

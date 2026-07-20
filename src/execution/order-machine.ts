@@ -27,10 +27,14 @@ export type OrderState =
  * Legal transitions (`11` §6). `PARTIAL` is a distinct state (ladders / large
  * orders) that keeps its filled qty through to `FILLED` or `CANCELLED` — carried
  * on {@link OrderPayload.filledQty}, not modeled as extra states.
+ *
+ * `SUBMITTING → FAILED` is per the `11` §6 exits table (`OPEN`/`REJECTED`/`FAILED`):
+ * a submit that throws mid-send (WS timeout / transport error, no venue verdict) lands
+ * in `FAILED`, distinct from a venue `REJECTED` (order seen and refused).
  */
 const ORDER_TRANSITIONS = {
   NEW: ['SUBMITTING', 'FAILED'],
-  SUBMITTING: ['OPEN', 'REJECTED'],
+  SUBMITTING: ['OPEN', 'REJECTED', 'FAILED'],
   OPEN: ['FILLED', 'PARTIAL', 'CANCELLED', 'EXPIRED'],
   PARTIAL: ['FILLED', 'CANCELLED'],
   FILLED: [],

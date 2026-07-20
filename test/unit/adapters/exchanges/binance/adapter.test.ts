@@ -144,15 +144,16 @@ describe('createBinanceAdapter', () => {
     expect(c.loads()).toBe(1) // no reload after close
   })
 
-  it('trade-side stubs are NotImplemented; public stream fails loud without ws+bus deps', async () => {
+  it('account-setup stubs are NotImplemented; order path + streams fail loud without their deps', async () => {
     const clock = createVirtualClock(0)
     const { client } = makeClient(['clean-perp-btc'])
     const adapter = createBinanceAdapter({ client, clock })
     await adapter.init()
 
     const order = { symbol: 'BTC', side: 'long', type: 'market', qty: 1, clientOrderId: 'o1' } as const
-    expect(() => adapter.placeOrder(order)).toThrow(/NotImplemented: BinanceAdapter.placeOrder — task 0230/)
-    expect(() => adapter.cancelOrder('o1')).toThrow(/NotImplemented: BinanceAdapter.cancelOrder — task 0230/)
+    // Order path is wired only when wsApiPrivate + restOrders + bus are injected; absent them it fails loud.
+    expect(() => adapter.placeOrder(order)).toThrow(/order path requires wsApiPrivate \+ restOrders \+ bus deps/)
+    expect(() => adapter.cancelOrder('o1')).toThrow(/order path requires wsApiPrivate \+ restOrders \+ bus deps/)
     expect(() => adapter.setPositionMode('one_way')).toThrow(/NotImplemented/)
     // Public stream is wired only when ws+bus are injected; absent them it fails loud (not NotImplemented).
     expect(() => adapter.streams.public.subscribe(['BTC'])).toThrow(/public stream requires ws\+bus deps/)

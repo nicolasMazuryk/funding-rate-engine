@@ -32,6 +32,7 @@ import {
   TERMINAL_INTENT_STATES,
   transitionIntent,
 } from '../intent/intent-machine.js'
+import { makeClientOrderId } from '../order-id/client-order-id.js'
 import type { EventBus, Unsubscribe } from '../ports/bus.js'
 import type { Clock } from '../ports/clock.js'
 import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-adapter.js'
@@ -332,7 +333,7 @@ export function createEngine(deps: EngineDeps): Engine {
       return
     }
 
-    const clientOrderId = `${intentId}-entry-1`
+    const clientOrderId = makeClientOrderId({ intentId, leg: 'entry', attempt: 1 })
     commit({
       intentId,
       symbol,
@@ -351,7 +352,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const rec = intents.get(intentId)
     if (rec?.state !== 'MONITORING') return
 
-    const clientOrderId = `${intentId}-exit-1`
+    const clientOrderId = makeClientOrderId({ intentId, leg: 'exit', attempt: 1 })
     commit({ intentId, symbol: rec.symbol, from: 'MONITORING', to: 'EXITING', payload: {}, extras: { clientOrderId } })
     pendingOrders.set(clientOrderId, { intentId, leg: 'exit' })
     void exchange.placeOrder({
@@ -428,7 +429,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const engineQty = rec.entryFillQty ?? rec.entryQty
     let venueQty = 0
     try {
-      const order = await exchange.getOrder(`${intentId}-entry-1`)
+      const order = await exchange.getOrder(makeClientOrderId({ intentId, leg: 'entry', attempt: 1 }))
       venueQty = order.qty ?? 0
     } catch {
       venueQty = 0
@@ -472,7 +473,7 @@ export function createEngine(deps: EngineDeps): Engine {
       entryQty: r.entryQty ?? strategyConfig.entryQty,
     }
     intents.set(r.intentId, rec)
-    const clientOrderId = r.clientOrderId ?? `${r.intentId}-entry-1`
+    const clientOrderId = r.clientOrderId ?? makeClientOrderId({ intentId: r.intentId, leg: 'entry', attempt: 1 })
 
     let order: Order | undefined
     try {

@@ -10,7 +10,7 @@
  * unit test injects a fixture-backed fake and runs fully offline.
  */
 
-import { USDMClient, WebsocketClient } from 'binance'
+import { USDMClient, WebsocketAPIClient, WebsocketClient } from 'binance'
 import {
   type Balances,
   binanceusdm,
@@ -54,6 +54,8 @@ export interface BinanceClients {
   readonly wsPublic: WebsocketClient
   /** Native private user-data WS (0220). Credentialed — its own connection, distinct from {@link wsPublic}. */
   readonly wsPrivate: WebsocketClient
+  /** Native WS-API order client (0230): submit/cancel over the credentialed WS order API. */
+  readonly wsApiPrivate: WebsocketAPIClient
 }
 
 /**
@@ -84,7 +86,11 @@ export function createBinanceClients(_profile: ExchangeProfile, secrets: ParsedE
     api_secret: secrets.apiSecret,
     beautify: true,
   })
-  return { ccxt: ccxtClient, native, wsPublic, wsPrivate }
+  // Credentialed WS-API order client (0230). Its own connection; the SDK signs each
+  // request and manages the socket. Submit/cancel land on `submitNewFuturesOrder`/
+  // `cancelFuturesOrder('usdm', …)`; a per-request timeout is imposed by the transport.
+  const wsApiPrivate = new WebsocketAPIClient({ api_key: secrets.apiKey, api_secret: secrets.apiSecret })
+  return { ccxt: ccxtClient, native, wsPublic, wsPrivate, wsApiPrivate }
 }
 
 /**
