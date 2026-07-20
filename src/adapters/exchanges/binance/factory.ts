@@ -32,6 +32,12 @@ import { budgetToLimiterArgs, createRateLimiter, type RateLimiter } from '../../
  */
 export interface BinanceMarketClient {
   loadMarkets(): Promise<Record<string, MarketInterface | undefined>>
+  /** Per-symbol leverage — account setup, set once in advance (`11` §1, 0240). ccxt sig: `(leverage, symbol, params)`. */
+  setLeverage(leverage: number, symbol?: string, params?: Record<string, unknown>): Promise<unknown>
+  /** Margin mode (`'isolated'`) per symbol — account setup (`11` §1, 0240). ccxt sig: `(marginMode, symbol, params)`. */
+  setMarginMode(marginMode: string, symbol?: string, params?: Record<string, unknown>): Promise<unknown>
+  /** Position mode — one-way = `hedged:false`, account-wide (`11` §1, 0240). ccxt sig: `(hedged, symbol?, params)`. */
+  setPositionMode(hedged: boolean, symbol?: string, params?: Record<string, unknown>): Promise<unknown>
   fetchFundingRate(symbol: string): Promise<FundingRate>
   fetchFundingRateHistory(symbol: string, since?: number, limit?: number): Promise<FundingRateHistory[]>
   /** Last-price read for the public-stream tick REST fallback (0210). */

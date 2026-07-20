@@ -34,6 +34,7 @@ import { createOrderManager, type OrderManager } from '../../../execution/order-
 import type { ConsecutiveFailureCounter } from '../../shared/errors.js'
 import { createConsecutiveFailureCounter, NotFoundError } from '../../shared/errors.js'
 import type { RateLimiter } from '../../shared/rate-limiter.js'
+import { type BinanceAccountSetup, createBinanceAccountSetup } from './account-setup.js'
 import { mapBinanceError } from './error-map.js'
 import type { BinanceMarketClient } from './factory.js'
 import { buildInstrumentRegistry } from './instrument.js'
@@ -61,6 +62,8 @@ const WEIGHT_POSITIONS = 5
 const WEIGHT_BALANCE = 5
 const WEIGHT_OPEN_ORDERS = 40
 const WEIGHT_GET_ORDER = 1
+/** Account-setup writes (`setLeverage`/`setMarginMode`/`setPositionMode`) — general lane, weight 1. */
+const WEIGHT_ACCOUNT_SETUP = 1
 
 /**
  * Quote/settle asset for the linear USDT-perp universe (`10` §3). The account balance the
@@ -118,11 +121,6 @@ export interface BinanceAdapterDeps {
 /** ccxt reports funding as a fraction (`0.0001`); the engine speaks signed percent (`0.01`). */
 function toSignedPercent(fundingRate: number | undefined): number {
   return (fundingRate ?? 0) * 100
-}
-
-/** Throw the uniform not-yet-built marker for a trade-side method (filled by 02xx). */
-function notImplemented(method: string, task: string): never {
-  throw new Error(`NotImplemented: BinanceAdapter.${method} — task ${task}`)
 }
 
 /** Placeholder public stream when `ws`/`bus` are not injected — every method fails loud. */
@@ -225,6 +223,17 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   function venueSymbol(symbol: string): string {
     return normalize(symbol).venueSymbol
   }
+
+  /**
+   * Cached ccxt account setup (`11` §1) backing the three port methods below. General-lane
+   * + error-mapped like the other REST reads; the applied-state cache makes a repeat call a
+   * no-op. The effective (delta-resolved) leverage arrives via the port method's `leverage`.
+   */
+  const accountSetup: BinanceAccountSetup = createBinanceAccountSetup({
+    client,
+    resolveVenue: venueSymbol,
+    call: (fn) => callGeneral(WEIGHT_ACCOUNT_SETUP, fn),
+  })
 
   /** Predicted-funding REST read — the `predictedFunding` method and the stream fallback share it. */
   async function readPredictedFunding(symbol: string): Promise<Rate> {
@@ -430,15 +439,15 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
       if (wsPrivate && bus) await privateStream.close()
     },
 
-    // ── account setup (trade-side — 0240) ─────────────────────────────────────
-    setLeverage(_symbol: string, _leverage: number): Promise<void> {
-      return notImplemented('setLeverage', '0240')
+    // ── account setup (cached ccxt writes, set once in advance — `11` §1) ──────
+    setLeverage(symbol: string, leverage: number): Promise<void> {
+      return accountSetup.setLeverage(symbol, leverage)
     },
-    setMarginMode(_symbol: string, _mode: MarginMode): Promise<void> {
-      return notImplemented('setMarginMode', '0240')
+    setMarginMode(symbol: string, mode: MarginMode): Promise<void> {
+      return accountSetup.setMarginMode(symbol, mode)
     },
-    setPositionMode(_mode: PositionMode): Promise<void> {
-      return notImplemented('setPositionMode', '0240')
+    setPositionMode(mode: PositionMode): Promise<void> {
+      return accountSetup.setPositionMode(mode)
     },
 
     // ── market metadata (synchronous reads off the cached registry) ───────────

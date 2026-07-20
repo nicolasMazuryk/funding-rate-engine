@@ -69,8 +69,13 @@ export interface EngineDeps {
   readonly killSwitch?: { state(): KillSwitchState }
   /** Seed balance for the preflight margin check; `undefined` fails closed (no hidden default per fail-loud). */
   readonly initialBalance?: Balance
-  /** Whether leverage/margin-mode setup ran in advance (`11` §1); real producer 0240. Defaults to `true`. */
-  readonly accountSetupComplete?: boolean
+  /**
+   * Whether leverage/margin-mode setup ran in advance (`11` §1). A flat `boolean` or a
+   * **per-symbol** predicate (0240's `runAccountSetup().isReady`, which marks a symbol
+   * whose `setLeverage` failed untradable → preflight `account_setup_incomplete`).
+   * Defaults to `() => true` — existing callers/goldens untouched.
+   */
+  readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
   /** Reconciliation sink invoked after `CLOSED` (composition logs the diff; no throw on mismatch). */
   readonly onReconciliation?: (record: ReconciliationRecord) => void
 }
@@ -194,7 +199,14 @@ export function createEngine(deps: EngineDeps): Engine {
   const { bus, clock, scheduler, exchange, wal, repo, registry, strategyConfig } = deps
   const riskGate: RiskGate = deps.riskGate ?? { check: () => ({ allowed: true }) }
   const killSwitch = deps.killSwitch ?? { state: (): KillSwitchState => 'off' }
-  const accountSetupComplete = deps.accountSetupComplete ?? true
+  // Resolve the setup-readiness input to a uniform per-symbol predicate (bool → constant fn).
+  const accountSetupReady: (symbol: string) => boolean =
+    typeof deps.accountSetupComplete === 'function'
+      ? deps.accountSetupComplete
+      : (
+          (ready: boolean) => () =>
+            ready
+        )(deps.accountSetupComplete ?? true)
   // Fail loud on misconfiguration: an id with no registered module is a startup bug, not a runtime skip.
   const activeModule = resolveModule(registry, strategyConfig.id)
 
@@ -309,7 +321,7 @@ export function createEngine(deps: EngineDeps): Engine {
       qty: strategyConfig.entryQty,
       price: latestPrice.get(symbol),
       instrument: exchange.normalize(symbol),
-      accountSetupComplete,
+      accountSetupComplete: accountSetupReady(symbol),
       marketStatus: market?.status ?? 'delisted',
     }
   }
@@ -459,6 +471,8 @@ export function createEngine(deps: EngineDeps): Engine {
       case 'FundingSettled':
       case 'FundingFeeAccrued':
       case 'PositionUpdate':
+      // Orphan handling is the risk layer's job (0380), which subscribes directly.
+      case 'OrphanDetected':
         return
       default:
         assertNever(event)

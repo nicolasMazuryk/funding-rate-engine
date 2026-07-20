@@ -14,6 +14,7 @@ import type { VenueErrorKind } from '../../core/ports/exchange-adapter.js'
 
 /** The REST-shaped adapter methods that can be scripted to fail (one counter each). */
 export type SimCallClass =
+  | 'setLeverage'
   | 'placeOrder'
   | 'cancelOrder'
   | 'getOrder'

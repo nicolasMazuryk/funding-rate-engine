@@ -17,6 +17,15 @@ function makeClient(initial: readonly string[]) {
       loads++
       return Promise.resolve(loadMarkets(stems))
     },
+    setLeverage() {
+      return Promise.resolve({})
+    },
+    setMarginMode() {
+      return Promise.resolve({})
+    },
+    setPositionMode() {
+      return Promise.resolve({})
+    },
     fetchFundingRate(symbol) {
       return Promise.resolve({ symbol, info: {}, fundingRate: -0.0005, timestamp: 1_000 } as FundingRate)
     },
@@ -144,7 +153,7 @@ describe('createBinanceAdapter', () => {
     expect(c.loads()).toBe(1) // no reload after close
   })
 
-  it('account-setup stubs are NotImplemented; order path + streams fail loud without their deps', async () => {
+  it('account setup applies (cached, no throw); order path + streams fail loud without their deps', async () => {
     const clock = createVirtualClock(0)
     const { client } = makeClient(['clean-perp-btc'])
     const adapter = createBinanceAdapter({ client, clock })
@@ -154,7 +163,10 @@ describe('createBinanceAdapter', () => {
     // Order path is wired only when wsApiPrivate + restOrders + bus are injected; absent them it fails loud.
     expect(() => adapter.placeOrder(order)).toThrow(/order path requires wsApiPrivate \+ restOrders \+ bus deps/)
     expect(() => adapter.cancelOrder('o1')).toThrow(/order path requires wsApiPrivate \+ restOrders \+ bus deps/)
-    expect(() => adapter.setPositionMode('one_way')).toThrow(/NotImplemented/)
+    // Account setup is wired (0240) — the cached ccxt writes resolve, no NotImplemented stub.
+    await expect(adapter.setPositionMode('one_way')).resolves.toBeUndefined()
+    await expect(adapter.setMarginMode('BTC', 'isolated')).resolves.toBeUndefined()
+    await expect(adapter.setLeverage('BTC', 5)).resolves.toBeUndefined()
     // Public stream is wired only when ws+bus are injected; absent them it fails loud (not NotImplemented).
     expect(() => adapter.streams.public.subscribe(['BTC'])).toThrow(/public stream requires ws\+bus deps/)
     expect(() => adapter.streams.public.subscribeTicks(['BTC'])).toThrow(/public stream requires ws\+bus deps/)

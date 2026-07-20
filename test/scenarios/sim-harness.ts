@@ -11,9 +11,11 @@ import { createVirtualClock, type VirtualClock } from '../../src/adapters/clock/
 import { createSimExchange, type SimExchange } from '../../src/adapters/sim/sim-exchange.js'
 import { createEventBus } from '../../src/core/events/bus.js'
 import type { EngineEvent } from '../../src/core/events/types.js'
+import type { EventBus } from '../../src/core/ports/bus.js'
 
 export interface SimHarness {
   readonly clock: VirtualClock
+  readonly bus: EventBus
   readonly sim: SimExchange
   readonly events: readonly EngineEvent[]
 }
@@ -24,5 +26,5 @@ export function simHarness(startMs = 0): SimHarness {
   const events: EngineEvent[] = []
   bus.subscribe((e) => events.push(e))
   const sim = createSimExchange(clock, bus)
-  return { clock, sim, events }
+  return { clock, bus, sim, events }
 }

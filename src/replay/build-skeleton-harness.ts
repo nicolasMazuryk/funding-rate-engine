@@ -84,7 +84,7 @@ export interface BuildOpts {
   readonly riskGate?: RiskGate
   readonly killSwitch?: KillSwitch
   readonly initialBalance?: Balance
-  readonly accountSetupComplete?: boolean
+  readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
   readonly onReconciliation?: (record: ReconciliationRecord) => void
   readonly logger?: Logger
 }

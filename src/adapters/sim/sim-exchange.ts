@@ -69,6 +69,11 @@ interface RejectVerdict {
 export interface SimExchange extends ExchangeAdapter {
   /** Set the mark price used for instant fills, funding notional, and resting-order crossing (normalized symbol). */
   setPrice(symbol: string, px: number): void
+  /**
+   * Seed a venue position directly (no order flow), so a scenario can create a position
+   * with **no owning intent** — the orphan case (`00_globals.md` §5.3). `qty ≤ 0` clears it.
+   */
+  setPosition(symbol: string, side: Side, qty: number, entryPrice?: number): void
   /** Script the predicted rate and publish `FundingPredicted` (`10` §7). Defaults `ts` to `clock.now()`. */
   setPredictedFunding(symbol: string, rate: number, ts?: number): void
   /**
@@ -386,8 +391,12 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
 
     // ── account setup (no-op recorders — `11` §1) ─────────────────────────────
     setLeverage(symbol: string, leverage: number): Promise<void> {
-      setupCalls.push({ kind: 'setLeverage', symbol, leverage })
-      return Promise.resolve()
+      // Guarded so `scriptRateLimit('setLeverage', …)` can fail it → the symbol goes
+      // untradable → engine preflight rejects `account_setup_incomplete` (0240 test).
+      return guardCall('setLeverage', () => {
+        setupCalls.push({ kind: 'setLeverage', symbol, leverage })
+        return Promise.resolve()
+      })
     },
     setMarginMode(symbol: string, mode: MarginMode): Promise<void> {
       setupCalls.push({ kind: 'setMarginMode', symbol, mode })
@@ -496,6 +505,14 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
       // so it happens even when a public disconnect drops the tick from the client).
       emitter.emit({ type: 'MarketTick', symbol, price: px, ts: clock.now() })
       crossRestingOrders(symbol, px)
+    },
+    setPosition(symbol: string, side: Side, qty: number, entryPrice?: number): void {
+      normalize(symbol) // fail-loud on unknown symbol
+      if (qty <= 0) {
+        positions.delete(symbol)
+        return
+      }
+      positions.set(symbol, { symbol, side, qty, ...(entryPrice !== undefined ? { entryPrice } : {}) })
     },
     setPredictedFunding(symbol: string, rate: number, ts: number = clock.now()): void {
       const reading: Rate = { symbol, rate, ts }

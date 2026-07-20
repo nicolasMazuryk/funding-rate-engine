@@ -1,7 +1,7 @@
 /**
  * The event spine (`08_system_overview.md` §4).
  *
- * Every input to the pure core is one of these eight immutable value objects,
+ * Every input to the pure core is one of these nine immutable value objects,
  * produced by the exchange adapters at the edges; every output is an intent/command.
  * The union is closed and discriminated on `type` so downstream switches are
  * exhaustiveness-checked (see {@link ./types.test.ts} and `assertNever`).
@@ -105,6 +105,19 @@ export interface BalanceUpdate {
   readonly used: number
 }
 
+/**
+ * A venue position with **no owning intent** — an orphan (`00_globals.md` §5.3), detected
+ * by the position tracker at REST reconcile (`11` §8). Detect-and-alert only; the handler
+ * (auto-flatten) is 0380's risk layer, which consumes this off the bus.
+ */
+export interface OrphanDetected {
+  readonly type: 'OrphanDetected'
+  readonly symbol: string
+  /** Absolute venue position size, base units (REST ground truth). */
+  readonly qty: number
+  readonly side: Side
+}
+
 /** The closed, discriminated event union that drives the core (`08` §4). */
 export type EngineEvent =
   | Timer
@@ -115,6 +128,7 @@ export type EngineEvent =
   | OrderUpdate
   | PositionUpdate
   | BalanceUpdate
+  | OrphanDetected
 
 /** The `type` tag of any {@link EngineEvent}. */
 export type EngineEventType = EngineEvent['type']

@@ -24,13 +24,15 @@ function summarize(event: EngineEvent): string {
       return `PositionUpdate:${event.symbol}`
     case 'BalanceUpdate':
       return `BalanceUpdate:${event.asset}`
+    case 'OrphanDetected':
+      return `OrphanDetected:${event.symbol}`
     default:
       return assertNever(event)
   }
 }
 
 describe('EngineEvent exhaustiveness', () => {
-  it('summarize handles one instance of each of the 8 variants', () => {
+  it('summarize handles one instance of each of the 9 variants', () => {
     const events: EngineEvent[] = [
       { type: 'Timer', kind: 'scan', ts: 1 },
       { type: 'FundingPredicted', symbol: 'BTC', rate: -0.4, ts: 1 },
@@ -40,6 +42,7 @@ describe('EngineEvent exhaustiveness', () => {
       { type: 'OrderUpdate', clientOrderId: 'c1', status: 'FILLED' },
       { type: 'PositionUpdate', symbol: 'BTC', qty: 1, side: 'long' },
       { type: 'BalanceUpdate', asset: 'USDT', free: 10, used: 0 },
+      { type: 'OrphanDetected', symbol: 'BTC', qty: 1, side: 'long' },
     ]
     expect(events.map(summarize)).toEqual([
       'Timer:scan',
@@ -50,8 +53,9 @@ describe('EngineEvent exhaustiveness', () => {
       'OrderUpdate:c1',
       'PositionUpdate:BTC',
       'BalanceUpdate:USDT',
+      'OrphanDetected:BTC',
     ])
-    expect(events).toHaveLength(8)
+    expect(events).toHaveLength(9)
   })
 
   it('assertNever throws if an impossible value reaches it at runtime', () => {
