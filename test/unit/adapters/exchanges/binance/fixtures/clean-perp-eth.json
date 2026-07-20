@@ -1,0 +1,20 @@
+{
+  "id": "ETHUSDT",
+  "symbol": "ETH/USDT:USDT",
+  "base": "ETH",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "precision": { "amount": 0.01, "price": 0.01 },
+  "limits": { "amount": { "min": 0.01 }, "cost": { "min": 5 } },
+  "info": {}
+}

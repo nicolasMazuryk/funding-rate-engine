@@ -1,0 +1,20 @@
+{
+  "id": "BTCUSD_PERP",
+  "symbol": "BTC/USD:BTC",
+  "base": "BTC",
+  "quote": "USD",
+  "settle": "BTC",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": false,
+  "inverse": true,
+  "active": true,
+  "contractSize": 100,
+  "precision": { "amount": 1, "price": 0.1 },
+  "limits": { "amount": { "min": 1 }, "cost": { "min": 0 } },
+  "info": {}
+}

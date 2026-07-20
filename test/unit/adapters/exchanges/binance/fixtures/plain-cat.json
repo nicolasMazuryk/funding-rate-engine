@@ -1,0 +1,20 @@
+{
+  "id": "CATUSDT",
+  "symbol": "CAT/USDT:USDT",
+  "base": "CAT",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "precision": { "amount": 1, "price": 0.00001 },
+  "limits": { "amount": { "min": 1 }, "cost": { "min": 5 } },
+  "info": {}
+}

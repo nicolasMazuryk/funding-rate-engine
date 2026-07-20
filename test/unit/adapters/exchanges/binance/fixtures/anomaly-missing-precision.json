@@ -1,0 +1,20 @@
+{
+  "id": "BROKENUSDT",
+  "symbol": "BROKEN/USDT:USDT",
+  "base": "BROKEN",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "precision": { "amount": 1, "price": null },
+  "limits": { "amount": { "min": 1 }, "cost": { "min": 5 } },
+  "info": {}
+}

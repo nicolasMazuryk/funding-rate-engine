@@ -1,0 +1,20 @@
+{
+  "id": "AAVEUSDT",
+  "symbol": "AAVE/USDT:USDT",
+  "base": "AAVE",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "precision": { "amount": 0.1, "price": 0.01 },
+  "limits": { "amount": { "min": 0.1 }, "cost": { "min": 5 } },
+  "info": { "fundingIntervalHours": "4" }
+}

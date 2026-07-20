@@ -19,6 +19,8 @@
     "verify": "npm run typecheck && npm run check && npm run test"
   },
   "dependencies": {
+    "binance": "^3.6.1",
+    "ccxt": "^4.5.67",
     "dotenv": "^17.4.2",
     "drizzle-orm": "^0.44.6",
     "pg": "^8.16.3",

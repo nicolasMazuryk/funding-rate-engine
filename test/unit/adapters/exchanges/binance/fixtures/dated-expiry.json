@@ -1,0 +1,21 @@
+{
+  "id": "BTCUSDT_240628",
+  "symbol": "BTC/USDT:USDT-240628",
+  "base": "BTC",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "future",
+  "spot": false,
+  "swap": false,
+  "future": true,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "expiry": 1719532800000,
+  "precision": { "amount": 0.001, "price": 0.1 },
+  "limits": { "amount": { "min": 0.001 }, "cost": { "min": 5 } },
+  "info": {}
+}

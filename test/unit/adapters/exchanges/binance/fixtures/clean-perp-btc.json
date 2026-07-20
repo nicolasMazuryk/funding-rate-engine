@@ -1,0 +1,22 @@
+{
+  "id": "BTCUSDT",
+  "symbol": "BTC/USDT:USDT",
+  "base": "BTC",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "margin": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "expiry": null,
+  "precision": { "amount": 0.001, "price": 0.1 },
+  "limits": { "amount": { "min": 0.001, "max": 1000 }, "cost": { "min": 5 }, "price": { "min": 0.1 } },
+  "info": {}
+}

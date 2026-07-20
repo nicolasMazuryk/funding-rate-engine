@@ -1,0 +1,20 @@
+{
+  "id": "SRMUSDT",
+  "symbol": "SRM/USDT:USDT",
+  "base": "SRM",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": false,
+  "contractSize": 1,
+  "precision": { "amount": 1, "price": 0.001 },
+  "limits": { "amount": { "min": 1 }, "cost": { "min": 5 } },
+  "info": {}
+}
