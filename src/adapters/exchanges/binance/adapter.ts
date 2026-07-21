@@ -16,6 +16,7 @@ import type {
   Balance,
   ExchangeAdapter,
   FundingEvent,
+  FundingIncome,
   Instrument,
   MarginMode,
   Market,
@@ -528,6 +529,12 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
       return rows
         .filter((r) => r.timestamp !== undefined && r.timestamp >= range.fromTs && r.timestamp <= range.toTs)
         .map((r) => ({ symbol, rate: toSignedPercent(r.fundingRate), settleTs: r.timestamp as number }))
+    },
+    fundingIncome(_symbol: string, _range: TimeRange): Promise<FundingIncome[]> {
+      // NotImplemented stub (header convention): the funding gate's REST safety net goes
+      // live in 0300 — real ccxt income read via `callGeneral` (fetch income of type
+      // `FUNDING_FEE`) + testnet verification lands there, when the gate is engine-wired.
+      throw new Error('BinanceAdapter.fundingIncome: not implemented until the funding gate goes live (task 0300)')
     },
 
     // ── streams (native WS — 0210 public / 0220 private) ──────────────────────

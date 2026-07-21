@@ -1,0 +1,2 @@
+{"event":"funding_gate_opened","intentId":"g1","kind":"gate","offsetS":4,"seq":0,"source":"ws","ts":0,"v":1}
+{"event":"funding_gate_closed","intentId":"g1","kind":"gate","reason":"opened","seq":1,"ts":0,"v":1}

@@ -22,6 +22,7 @@ export type SimCallClass =
   | 'getBalance'
   | 'predictedFunding'
   | 'fundingHistory'
+  | 'fundingIncome'
 
 /** Which call ordinals of a {@link SimCallClass} throw, and with what typed kind. */
 export interface FailSpec {

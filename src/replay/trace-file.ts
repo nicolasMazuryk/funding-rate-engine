@@ -70,7 +70,28 @@ export interface TraceOrderAction {
   readonly reduceOnly?: boolean
 }
 
-export type TraceRecord = TraceHeader | TraceEvent | TraceTransition | TraceOrderAction
+/**
+ * A funding-gate open/close — diagnostic only, never diffed (task 0290; `docs/trace-format.md`).
+ * How `intent.funding_gate_opened`/`_closed` reach the trace. Additive: `TRACE_VERSION` stays
+ * `1` (`readTrace` rejects an unknown `v`, not an unknown `kind`; replay diffs only
+ * `transition` records, so a `gate` record is ignored on replay).
+ */
+export interface TraceGate {
+  readonly v: 1
+  readonly kind: 'gate'
+  readonly seq: number
+  readonly ts: number
+  readonly intentId: string
+  readonly event: 'funding_gate_opened' | 'funding_gate_closed'
+  /** Open source (`ws`|`rest`) — present on `funding_gate_opened`. */
+  readonly source?: string
+  /** `t_drop_offset_s` — present on `funding_gate_opened`. */
+  readonly offsetS?: number
+  /** Close reason (`opened`|`timeout`) — present on `funding_gate_closed`. */
+  readonly reason?: string
+}
+
+export type TraceRecord = TraceHeader | TraceEvent | TraceTransition | TraceOrderAction | TraceGate
 
 export interface TraceFile {
   /** Write the config header (call once, before any other record). */
@@ -81,6 +102,8 @@ export interface TraceFile {
   recordTransition(entry: TransitionLogEntry): void
   /** Append a venue order action as an `order-action` record (diagnostic only). */
   recordOrderAction(action: Omit<TraceOrderAction, 'v' | 'kind' | 'seq'>): void
+  /** Append a funding-gate open/close as a `gate` record (diagnostic only). */
+  recordGate(gate: Omit<TraceGate, 'v' | 'kind' | 'seq'>): void
   /** Release the open file descriptor. */
   close(): void
 }
@@ -116,6 +139,9 @@ export function createTraceFile({ path }: { readonly path: string }): TraceFile 
     },
     recordOrderAction(action): void {
       write({ v: TRACE_VERSION, kind: 'order-action', seq: seq++, ...action })
+    },
+    recordGate(gate): void {
+      write({ v: TRACE_VERSION, kind: 'gate', seq: seq++, ...gate })
     },
     close(): void {
       closeSync(fd)

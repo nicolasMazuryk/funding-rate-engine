@@ -23,6 +23,7 @@ without a `seq`; every other kind shares one monotonic `seq` counter.
 | `event` | Replay **input** — a bus event exactly as published | as input | `seq`, `ts`, `event` (an `EngineEvent`) |
 | `transition` | Recorded **output** — a WAL transition | **yes** | `seq`, `ts`, `intentId`, `fromState`, `toState`, `payload`, `clientOrderId?` |
 | `order-action` | Venue submit/cancel — **diagnostic only** | no | `seq`, `ts`, `action` (`place`\|`cancel`), `clientOrderId`, `symbol`, `side`, `qty`, `reduceOnly?` |
+| `gate` | Funding-gate open/close — **diagnostic only** | no | `seq`, `ts`, `intentId`, `event` (`funding_gate_opened`\|`funding_gate_closed`), `source?` (`ws`\|`rest`), `offsetS?`, `reason?` (`opened`\|`timeout`) |
 
 ## Input / output contract
 
@@ -38,6 +39,10 @@ without a `seq`; every other kind shares one monotonic `seq` counter.
 - **`order-action` = diagnostic only.** Captured for future debugging / venue-call
   replay; the current replay engine does not diff them, and the skeleton harness
   does not yet emit them (the writer API supports them for later tasks).
+- **`gate` = diagnostic only.** The funding gate's `funding_gate_opened`/`_closed`
+  observations (task 0290). Never diffed on replay; additive, so `v` stays `1`. The
+  gate golden fixture is a **direct byte-compare** (the standalone gate scenario emits
+  no WAL transitions, so there is nothing for `replayTrace` to round-trip).
 
 ## Ordering rule (load-bearing)
 

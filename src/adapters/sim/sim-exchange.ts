@@ -20,6 +20,7 @@ import type {
   Balance,
   ExchangeAdapter,
   FundingEvent,
+  FundingIncome,
   Instrument,
   MarginMode,
   Market,
@@ -159,6 +160,11 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
   const partialScripts = new Map<string, number[]>()
   const predicted = new Map<string, Rate>()
   const history = new Map<string, FundingEvent[]>()
+  // Funding-income ledger — the REST ground truth the funding gate polls (task 0290). Written
+  // on every settlement against an open position, independent of the `dropFundingFee` WS fault
+  // (the credit persists even when the private WS event is suppressed), so rest-vs-ws timing
+  // is deterministic. `fundingIncome` only ever returns rows whose `fundingTime <= clock.now()`.
+  const incomeLedger = new Map<string, FundingIncome[]>()
   const setupCalls: SetupCall[] = []
   const callCounts = new Map<SimCallClass, number>()
   const failSpecs = new Map<SimCallClass, FailSpec>()
@@ -467,6 +473,17 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
         return Promise.resolve(all.filter((e) => e.settleTs >= range.fromTs && e.settleTs <= range.toTs))
       })
     },
+    fundingIncome(symbol: string, range: TimeRange): Promise<FundingIncome[]> {
+      return guardCall('fundingIncome', () => {
+        const all = incomeLedger.get(symbol) ?? []
+        // Within `range` AND already settled by now — REST can't see a future credit. This is
+        // what makes the rest-vs-ws timing DoD deterministic (task 0290).
+        const now = clock.now()
+        return Promise.resolve(
+          all.filter((e) => e.fundingTime >= range.fromTs && e.fundingTime <= range.toTs && e.fundingTime <= now),
+        )
+      })
+    },
 
     // ── streams (no-op; emission is via the scripting surface below) ──────────
     streams: {
@@ -534,6 +551,11 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
       const notional = pos.qty * markPrice(symbol) * normalize(symbol).contractSize
       const signedFundingPct = pos.side === 'long' ? -rate : rate
       const amount = (notional * signedFundingPct) / 100
+      // REST ground truth first — persisted before (and independent of) the WS emit, so a
+      // dropped `FundingFeeAccrued` still leaves the credit visible to `fundingIncome`.
+      const ledger = incomeLedger.get(symbol) ?? []
+      ledger.push({ symbol, amount, fundingTime: tSettle })
+      incomeLedger.set(symbol, ledger)
       emitter.emit({ type: 'FundingFeeAccrued', symbol, amount, fundingTime: tSettle })
 
       balance = { ...balance, free: balance.free + amount }

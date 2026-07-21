@@ -168,6 +168,20 @@ export interface FundingEvent {
   readonly settleTs: number
 }
 
+/**
+ * One funding-income credit/charge on the account (`fundingIncome`). Distinct from
+ * {@link FundingEvent}: `fundingHistory` returns the settled *rate*, this returns the
+ * account *credit* — the only thing that confirms *your* position was actually paid,
+ * which is the funding gate's REST safety net (task 0290; `00_globals.md` §6).
+ */
+export interface FundingIncome {
+  readonly symbol: string
+  /** Funding amount in quote currency (USDT); signed — credit positive, charge negative. */
+  readonly amount: number
+  /** `T_drop`, epoch ms UTC. */
+  readonly fundingTime: number
+}
+
 /** Inclusive time range for history queries, epoch ms UTC. */
 export interface TimeRange {
   readonly fromTs: number
@@ -234,6 +248,12 @@ export interface ExchangeAdapter {
   /** REST fallback for the public stream. */
   predictedFunding(symbol: string): Promise<Rate>
   fundingHistory(symbol: string, range: TimeRange): Promise<FundingEvent[]>
+  /**
+   * Account funding-income credits over `range` — the funding gate's REST safety net
+   * (task 0290; `00_globals.md` §6). Confirms *your* position was paid, unlike the
+   * rate-only {@link fundingHistory}.
+   */
+  fundingIncome(symbol: string, range: TimeRange): Promise<FundingIncome[]>
 
   // streams (native) — push onto the event bus (`08` §4)
   readonly streams: { readonly public: PublicStream; readonly private: PrivateStream }
