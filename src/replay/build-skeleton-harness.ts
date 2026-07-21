@@ -24,6 +24,7 @@ import { computeConfigRevisionHash } from '../config/revision-hash.js'
 import { createEventBus } from '../core/events/bus.js'
 import { createFundingFeeEventHandler } from '../core/intent/exit-policies/funding-fee-event.js'
 import { createRetracementHandler } from '../core/intent/exit-policies/retracement.js'
+import { createSlTpDeadlineHandler } from '../core/intent/exit-policies/sl-tp-deadline.js'
 import { TIMED_HANDLER } from '../core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry, type ExitPolicyRegistry } from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
@@ -42,6 +43,7 @@ import {
 import { createStrategy1 } from '../core/strategies/strategy-1.js'
 import { createStrategy1Ws } from '../core/strategies/strategy-1-ws.js'
 import { createStrategy2 } from '../core/strategies/strategy-2.js'
+import { createStrategy3a, strategy3aGeometry } from '../core/strategies/strategy-3a.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -141,6 +143,13 @@ function defaultRegistries(
     return {
       registry: createStrategyRegistry([createStrategy2()]),
       exitPolicyRegistry: createExitPolicyRegistry([handler]),
+    }
+  }
+  if (strategyConfig.id === 's3a') {
+    // S3a's `sl_tp_deadline` handler owns no gate — static OCO legs + a deadline (`04` §3).
+    return {
+      registry: createStrategyRegistry([createStrategy3a()]),
+      exitPolicyRegistry: createExitPolicyRegistry([createSlTpDeadlineHandler(strategy3aGeometry)]),
     }
   }
   return {

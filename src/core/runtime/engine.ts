@@ -55,11 +55,6 @@ import { computeFundingSchedule } from './funding-schedule.js'
 import { type PreflightSnapshot, runPreflight } from './preflight.js'
 import type { Scheduler } from './scheduler.js'
 
-/** Skeleton is long-only (`sim-exchange.ts` accrual convention: longs profit on very-negative funding). */
-const ENTRY_SIDE: Side = 'long'
-/** Reduce-only close of a long is a short. */
-const EXIT_SIDE: Side = 'short'
-
 /** The concrete ports the engine is wired with (`main.ts` supplies the real ones; tests supply fakes). */
 export interface EngineDeps {
   readonly bus: EventBus
@@ -168,6 +163,8 @@ interface IntentRecord {
   fundingReceived?: boolean
   /** Reference price at entry-decision time (`latestPrice` at `onEntry`) — S2's retracement anchor (`03` §2). In-memory only. */
   anchorPrice?: number
+  /** Realized predicted funding rate the intent entered on, signed percent — S3a's TP `|F|` source (`04` §3). In-memory only. */
+  ratePercent?: number
   deadlineMs?: number
   /** Exit reason the exit-policy handler commanded (stashed on `→ EXITING`, recorded on `→ CLOSED`). */
   exitReason?: ExitReason
@@ -231,6 +228,12 @@ function resolveModule(registry: StrategyRegistry, id: RuntimeStrategyConfig['id
 
 export function createEngine(deps: EngineDeps): Engine {
   const { bus, clock, scheduler, exchange, wal, repo, registry, strategyConfig, exitPolicyRegistry } = deps
+  // Direction-driven trade side (`04` §1: S3a is the first SHORT strategy). `direction`
+  // (`negative`/`positive`) is the funding-ordering family — orthogonal to the trade side;
+  // long-only strategies leave `entrySide` unset and are byte-unchanged (default `long`).
+  const entrySide: Side = strategyConfig.entrySide ?? 'long'
+  /** Reduce-only close is the opposite of the entry side. */
+  const exitSide: Side = entrySide === 'long' ? 'short' : 'long'
   const riskGate: RiskGate = deps.riskGate ?? { check: () => ({ allowed: true }) }
   const killSwitch = deps.killSwitch ?? { state: (): KillSwitchState => 'off' }
   // Resolve the setup-readiness input to a uniform per-symbol predicate (bool → constant fn).
@@ -292,6 +295,11 @@ export function createEngine(deps: EngineDeps): Engine {
   // Settlement instant per symbol, stashed at selection (`onScan`) and read at entry
   // (`onEntry`) — the `timed` exit's anchor, mirroring the `predicted`/`costBySymbol` maps.
   const settleBySymbol = new Map<string, number>()
+  // Realized predicted funding rate per symbol, stashed at selection and read at entry — S3a's
+  // TP is scaled by the realized `|F|` the intent entered on, not the selection threshold (`04`
+  // §3; the threshold proxy would sit the TP too shallow to cover the funding cost). In-memory
+  // only (mirrors `settleBySymbol`); no WAL field, so s1/s1-ws/s2 goldens are untouched (0370 re-derives).
+  const rateBySymbol = new Map<string, number>()
   // Advisory cost-model breakdown per symbol, stashed at selection, copied onto the intent at entry (task 0150).
   const costBySymbol = new Map<string, ProfitBreakdown>()
   // Latest venue state the preflight reads, updated from the event stream.
@@ -385,6 +393,8 @@ export function createEngine(deps: EngineDeps): Engine {
       // Stash the settlement instant for `onEntry` to thread into the intent (the
       // `timed` exit anchors on it, not fill time — `01` §3).
       settleBySymbol.set(trigger.symbol, trigger.settleTs)
+      // Stash the realized predicted rate too — S3a's TP scales off it (`04` §3).
+      rateBySymbol.set(trigger.symbol, candidate.ratePercent)
       // Entry timer fires `entryOffsetSeconds` before settlement (`00_globals.md` §7).
       scheduler.scheduleEntryTimer(trigger.symbol, trigger.settleTs - strategyConfig.entryOffsetSeconds * 1000)
     }
@@ -426,12 +436,14 @@ export function createEngine(deps: EngineDeps): Engine {
     const rec: IntentRecord = {
       symbol,
       state: 'SELECTED',
-      entrySide: ENTRY_SIDE,
+      entrySide,
       entryQty: qty,
       settleTs: settleBySymbol.get(symbol),
       // Reference price at entry-decision time (`03` §2 R8): the retracement anchor S2 trails
       // toward. Captured here (≈ best ask ≈ latest price at entry), held in-memory only.
       anchorPrice: price,
+      // Realized predicted rate the intent entered on — S3a's TP `|F|` source (`04` §3). In-memory only.
+      ratePercent: rateBySymbol.get(symbol),
     }
     const stashedCost = costBySymbol.get(symbol)
     if (stashedCost !== undefined) rec.costBreakdown = stashedCost
@@ -470,6 +482,7 @@ export function createEngine(deps: EngineDeps): Engine {
       settleTs: rec.settleTs,
       deadlineMs: rec.deadlineMs,
       anchorPrice: rec.anchorPrice,
+      ratePercent: rec.ratePercent,
     }
   }
 
@@ -496,7 +509,7 @@ export function createEngine(deps: EngineDeps): Engine {
     pendingOrders.set(clientOrderId, { intentId, leg: 'exit' })
     void exchange.placeOrder({
       symbol: rec.symbol,
-      side: EXIT_SIDE,
+      side: exitSide,
       type: 'market',
       qty: rec.entryQty,
       clientOrderId,
@@ -520,7 +533,7 @@ export function createEngine(deps: EngineDeps): Engine {
     pendingOrders.set(clientOrderId, { intentId, leg: 'exit-policy' })
     void exchange.placeOrder({
       symbol: rec.symbol,
-      side: EXIT_SIDE,
+      side: exitSide,
       type: req.type,
       qty,
       price,
@@ -699,7 +712,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const rec: IntentRecord = {
       symbol: r.symbol,
       state: 'SUBMITTING_ENTRY',
-      entrySide: r.entrySide ?? ENTRY_SIDE,
+      entrySide: r.entrySide ?? entrySide,
       entryQty: r.entryQty ?? 0,
       settleTs: r.tSettleMs,
     }
@@ -731,7 +744,7 @@ export function createEngine(deps: EngineDeps): Engine {
     const rec: IntentRecord = {
       symbol: r.symbol,
       state: 'MONITORING',
-      entrySide: r.entrySide ?? ENTRY_SIDE,
+      entrySide: r.entrySide ?? entrySide,
       entryQty: r.entryQty ?? 0,
       entryFillPx: r.entryFillPx,
       settleTs: r.tSettleMs,

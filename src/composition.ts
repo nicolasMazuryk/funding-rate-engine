@@ -16,6 +16,7 @@
 import type { EffectiveConfig } from './config/effective-config.js'
 import { createFundingFeeEventHandler } from './core/intent/exit-policies/funding-fee-event.js'
 import { createRetracementHandler } from './core/intent/exit-policies/retracement.js'
+import { createSlTpDeadlineHandler } from './core/intent/exit-policies/sl-tp-deadline.js'
 import { TIMED_HANDLER } from './core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry } from './core/intent/exit-policy.js'
 import type { Clock } from './core/ports/clock.js'
@@ -26,6 +27,7 @@ import { createStrategyRegistry, type RuntimeStrategyConfig } from './core/strat
 import { createStrategy1 } from './core/strategies/strategy-1.js'
 import { createStrategy1Ws } from './core/strategies/strategy-1-ws.js'
 import { createStrategy2 } from './core/strategies/strategy-2.js'
+import { createStrategy3a, strategy3aGeometry } from './core/strategies/strategy-3a.js'
 
 /** Read a numeric strategy param or fail loud — a missing/non-numeric key is a config bug. */
 function numberParam(params: Readonly<Record<string, number | string>>, key: string): number {
@@ -77,6 +79,18 @@ export function runtimeConfigFromEffective(cfg: EffectiveConfig): RuntimeStrateg
   if (cfg.strategy === 's1-ws') {
     return { ...base, fundingFeeTimeoutSeconds: numberParam(params, 'fundingFeeTimeoutSeconds') }
   }
+  // S3a is the first SHORT strategy (`04` §1): `entrySide: 'short'` drives the trade side while
+  // `direction` stays `negative` (the funding-ordering family). Its OCO exit reads the fixed-percent
+  // SL + funding-scaled TP params; the deadline is shared with S2.
+  if (cfg.strategy === 's3a') {
+    return {
+      ...base,
+      entrySide: 'short',
+      stopLossPercent: numberParam(params, 'stopLossPercent'),
+      tpVariantAMultiplier: numberParam(params, 'tpVariantAMultiplier'),
+      deadlineSeconds: numberParam(params, 'deadlineSeconds'),
+    }
+  }
   return { ...base, exitOffsetSeconds: numberParam(params, 'exitOffsetSeconds') }
 }
 
@@ -122,5 +136,19 @@ export function wireS2Engine(deps: S1EngineDeps, gate: S1WsGateDeps): Engine {
     ...deps,
     registry: createStrategyRegistry([createStrategy2()]),
     exitPolicyRegistry: createExitPolicyRegistry([createRetracementHandler(gate)]),
+  })
+}
+
+/**
+ * Wire the engine with the S3a strategy module and the `sl_tp_deadline` handler (task 0320).
+ * The handler places a static reduce-only OCO pair (SL stop above entry, TP limit below) through
+ * the engine's exit-policy order-command seam, bounded by a deadline market close — no gate deps.
+ * The S3a price geometry (fixed-percent SL, funding-scaled TP) is injected from the module.
+ */
+export function wireS3aEngine(deps: S1EngineDeps): Engine {
+  return createEngine({
+    ...deps,
+    registry: createStrategyRegistry([createStrategy3a()]),
+    exitPolicyRegistry: createExitPolicyRegistry([createSlTpDeadlineHandler(strategy3aGeometry)]),
   })
 }

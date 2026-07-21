@@ -50,6 +50,8 @@ export interface MonitoredIntent {
   readonly entryFillQty?: number
   /** Reference price at entry-decision time (`00_globals.md` §2 R8) — S2's retracement anchor (`03` §2). */
   readonly anchorPrice?: number
+  /** Realized predicted funding rate the intent entered on, signed percent — S3a's TP `|F|` source (`04` §3). */
+  readonly ratePercent?: number
 }
 
 /**

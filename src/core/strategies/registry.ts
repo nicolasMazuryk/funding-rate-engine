@@ -12,6 +12,7 @@
 
 import type { StrategyId } from '../../config/canonical.js'
 import type { ExitPolicyKind } from '../intent/exit-policy.js'
+import type { Side } from '../ports/exchange-adapter.js'
 import type { FeeInputs } from '../runtime/cost-model.js'
 import type { Candidate } from '../runtime/finder.js'
 
@@ -29,6 +30,12 @@ export interface RuntimeStrategyConfig {
   readonly thresholdPercent: number
   /** Which ordering family applies: `negative` most-negative-first, `positive` most-positive-first. */
   readonly direction: 'negative' | 'positive'
+  /** Trade side (`04` §1): `short` for S3a, default `long`. Orthogonal to `direction` (the funding-ordering family). */
+  readonly entrySide?: Side
+  /** Fixed SL distance, percent — NOT a multiple of `|F|` (`04` §5, contrast `slMultiplier`). S3a only. */
+  readonly stopLossPercent?: number
+  /** TP distance multiplier on `|F|` (`tp_variant_a_multiplier`, `04` §3/§5). S3a only. */
+  readonly tpVariantAMultiplier?: number
   /** Delay before `T_settle` at which the entry timer fires, seconds (`entry_offset_seconds`). */
   readonly entryOffsetSeconds: number
   /** Delay after `T_settle` at which the `timed` exit fires, seconds (`exit_offset_seconds`, S1). Absent for the WS-gated strategies (S1-WS/S2/S6). */
