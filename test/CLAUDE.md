@@ -12,6 +12,7 @@ The load-bearing property is determinism: same inputs → same trace, every run.
 | Scenario | `test/scenarios/**` | sim venue + virtual clock + engine (still no real I/O) | yes |
 | Golden | `test/golden/**` | byte-compared fixtures | yes |
 | Integration | `test/integration/**` | Postgres (separate script) | no — excluded from default verify |
+| Testnet | `src/testnet/`, run via `npm run test:testnet` | venue testnet creds (skips clean without) | no — excluded from default verify |
 | E2E | `test/e2e/**` | reserved, empty | no |
 
 `npm run verify` (typecheck + `biome check` + `vitest run`) is the gate; it runs the

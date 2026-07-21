@@ -6,3 +6,5 @@ coverage/
 !.env.example
 *.wal
 __workflow
+# Generated per-run testnet-tier summary artifact (task 0260) — not a committed fixture.
+test/testnet/

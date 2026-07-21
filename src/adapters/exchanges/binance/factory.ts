@@ -64,15 +64,31 @@ export interface BinanceClients {
   readonly wsApiPrivate: WebsocketAPIClient
 }
 
+export interface CreateBinanceClientsOptions {
+  /** `'testnet'` points every client at the Binance USD-M futures testnet (task 0260). Default `'prod'`. */
+  readonly network?: 'prod' | 'testnet'
+}
+
 /**
  * Build the live ccxt + native clients for a Binance instance. `binanceusdm` is the
  * USDT-margined linear-perp venue class, so `loadMarkets()` returns exactly the perp
  * universe the `10` §3 filter narrows. Rate limiting is left to ccxt for now; the
  * mapped taxonomy + token bucket are 0200.
+ *
+ * `opts.network: 'testnet'` (default `'prod'`, so every existing caller is unchanged
+ * per the 0200 opt-in idiom) points ccxt at the merged `urls.test` hosts (ccxt dropped
+ * `setSandboxMode` for USD-M) and flips `testnet: true` on the three native clients —
+ * this DRYs the url-merge previously duplicated inline in `capture-binance.ts`
+ * (`useTestnetHosts`) and the Binance integration smokes.
  */
-export function createBinanceClients(_profile: ExchangeProfile, secrets: ParsedEnv['secrets']): BinanceClients {
+export function createBinanceClients(
+  _profile: ExchangeProfile,
+  secrets: ParsedEnv['secrets'],
+  opts: CreateBinanceClientsOptions = {},
+): BinanceClients {
   // `_profile` is threaded through per the venue-profile contract but carries nothing
   // ccxt needs yet — rate-limit reserve / stagger wire in with the taxonomy (0200).
+  const testnet = opts.network === 'testnet'
   const ccxtClient = new binanceusdm({
     apiKey: secrets.apiKey,
     secret: secrets.apiSecret,
@@ -82,20 +98,35 @@ export function createBinanceClients(_profile: ExchangeProfile, secrets: ParsedE
     // credential-free (linear USDT perps need only public fapi exchangeInfo).
     options: { defaultType: 'swap', fetchCurrencies: false },
   })
-  const native = new USDMClient({ api_key: secrets.apiKey, api_secret: secrets.apiSecret })
+  if (testnet) {
+    ccxtClient.urls.api = {
+      ...(ccxtClient.urls.api as Record<string, string>),
+      ...(ccxtClient.urls.test as Record<string, string>),
+    }
+  }
+  const native = new USDMClient({
+    api_key: secrets.apiKey,
+    api_secret: secrets.apiSecret,
+    ...(testnet ? { testnet } : {}),
+  })
   // `beautify: true` → the client emits `formattedMessage` events the public stream reads.
-  const wsPublic = new WebsocketClient({ beautify: true })
+  const wsPublic = new WebsocketClient({ beautify: true, ...(testnet ? { testnet } : {}) })
   // Credentialed twin for the private user-data stream (0220): emits `formattedUserDataMessage`
   // and manages the listen key / keepalive / reconnect natively.
   const wsPrivate = new WebsocketClient({
     api_key: secrets.apiKey,
     api_secret: secrets.apiSecret,
     beautify: true,
+    ...(testnet ? { testnet } : {}),
   })
   // Credentialed WS-API order client (0230). Its own connection; the SDK signs each
   // request and manages the socket. Submit/cancel land on `submitNewFuturesOrder`/
   // `cancelFuturesOrder('usdm', …)`; a per-request timeout is imposed by the transport.
-  const wsApiPrivate = new WebsocketAPIClient({ api_key: secrets.apiKey, api_secret: secrets.apiSecret })
+  const wsApiPrivate = new WebsocketAPIClient({
+    api_key: secrets.apiKey,
+    api_secret: secrets.apiSecret,
+    ...(testnet ? { testnet } : {}),
+  })
   return { ccxt: ccxtClient, native, wsPublic, wsPrivate, wsApiPrivate }
 }
 

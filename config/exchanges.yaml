@@ -23,6 +23,15 @@ binance:
   ws:
     public_url: wss://fstream.binance.com/ws
     private_url: wss://fstream.binance.com/ws
+  # USD-M futures testnet (task 0260) — the testnet verification tier swaps to these
+  # base URLs; base-URL swap is data, not a code branch. WS-API order endpoint
+  # (wss://testnet.binancefuture.com/ws-fapi/v1) is handled by the native `binance`
+  # SDK's own `testnet: true` flag (factory.ts), not a schema field here.
+  testnet:
+    ws:
+      public_url: wss://fstream.binancefuture.com/ws
+      private_url: wss://fstream.binancefuture.com/ws
+    rest_url: https://testnet.binancefuture.com
   deltas: {}
 
 bybit:

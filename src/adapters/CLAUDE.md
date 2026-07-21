@@ -54,7 +54,8 @@ silently mis-sizes every future order, so there is no "warn and continue".
   trade-side methods and builds no error infra (KISS).
 - **Fixture capture tool** → task 0250. 0190 hand-captured the first ccxt payloads under
   `test/unit/adapters/exchanges/binance/fixtures/`.
-- **Live integration gate**: `RUN_BINANCE_INTEGRATION=1` runs the real public-REST market
-  smoke (no credentials); unset → skips. New env-flag pattern (mirrors golden's
-  `UPDATE_GOLDEN`); 0420–0460 reuse it. Excluded from `verify`.
+- **Testnet verification tier** (task 0260) → `npm run test:testnet -- --venue binance`.
+  Consolidates the old per-file env-gated smokes into one `src/testnet/` harness with a
+  JSON summary artifact; credential-gated (`BINANCE_TESTNET_API_KEY`/`_SECRET`), skips
+  clean without them. Excluded from `verify`; 0420–0460 copy its shape per venue.
 - Core-purity rule → `src/core/CLAUDE.md`; test tiers/conventions → `test/CLAUDE.md`.

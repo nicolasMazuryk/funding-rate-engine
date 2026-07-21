@@ -50,6 +50,20 @@ export const ExchangeProfileYamlSchema = z
         private_url: z.string().min(1),
       })
       .strict(),
+    // Testnet endpoints (task 0260) — optional, data-driven base-URL swap for the
+    // testnet verification tier. Absent for venues without an adapter yet.
+    testnet: z
+      .object({
+        ws: z
+          .object({
+            public_url: z.string().min(1),
+            private_url: z.string().min(1),
+          })
+          .strict(),
+        rest_url: z.string().min(1).optional(),
+      })
+      .strict()
+      .optional(),
     deltas: ExchangeDeltaSchema.default({}),
   })
   .strict()
@@ -78,6 +92,11 @@ export interface ExchangeProfile {
   readonly rateLimitWeightPerMinute: number
   readonly wsOrderAdapter: boolean
   readonly ws: { readonly publicUrl: string; readonly privateUrl: string }
+  /** Testnet endpoints (task 0260), when the venue's profile declares them. */
+  readonly testnet?: {
+    readonly ws: { readonly publicUrl: string; readonly privateUrl: string }
+    readonly restUrl?: string
+  }
   readonly deltas: ExchangeDelta
 }
 
@@ -93,6 +112,14 @@ function toProfile(p: ProfileYaml): ExchangeProfile {
     rateLimitWeightPerMinute: p.rate_limit_weight_per_minute,
     wsOrderAdapter: p.ws_order_adapter,
     ws: { publicUrl: p.ws.public_url, privateUrl: p.ws.private_url },
+    ...(p.testnet
+      ? {
+          testnet: {
+            ws: { publicUrl: p.testnet.ws.public_url, privateUrl: p.testnet.ws.private_url },
+            ...(p.testnet.rest_url !== undefined ? { restUrl: p.testnet.rest_url } : {}),
+          },
+        }
+      : {}),
     deltas: {
       fundingFeeTimeoutSeconds: p.deltas.funding_fee_timeout_seconds,
       leverage: p.deltas.leverage,

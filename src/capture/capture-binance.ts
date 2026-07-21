@@ -11,9 +11,11 @@
  * limit order that is immediately cancelled.
  */
 
-import { WebsocketAPIClient, WebsocketClient } from 'binance'
+import { WebsocketClient } from 'binance'
 import { binanceusdm } from 'ccxt'
 import { createRealClock } from '../adapters/clock/real-clock.js'
+import { createBinanceClients } from '../adapters/exchanges/binance/factory.js'
+import type { ExchangeProfile } from '../config/exchange-schema.js'
 import { makeClientOrderId } from '../core/order-id/client-order-id.js'
 import { writeJsonFixture, writeJsonlFixture } from './fixture-writer.js'
 import { writeManifest } from './manifest.js'
@@ -21,9 +23,19 @@ import { createScrubMaps, scrub } from './scrub.js'
 
 const FIXTURES_ROOT = 'test/fixtures/binance'
 
-/** Point ccxt's USD-M hosts at the futures testnet (mirrors the integration smokes). */
-function useTestnetHosts(ccxt: InstanceType<typeof binanceusdm>): void {
-  ccxt.urls.api = { ...(ccxt.urls.api as Record<string, string>), ...(ccxt.urls.test as Record<string, string>) }
+/**
+ * Fees/stagger/rate-limit fields are unused by capture (no order-cost math); the
+ * factory signature requires a full {@link ExchangeProfile} regardless.
+ */
+const PLACEHOLDER_PROFILE: ExchangeProfile = {
+  takerFeePct: 0.05,
+  makerFeePct: 0.02,
+  submissionStaggerMs: 100,
+  rateLimitReservePct: 10,
+  rateLimitWeightPerMinute: 2400,
+  wsOrderAdapter: true,
+  ws: { publicUrl: 'wss://fstream.binance.com/ws', privateUrl: 'wss://fstream.binance.com/ws' },
+  deltas: {},
 }
 
 function requireTestnetCreds(): { apiKey: string; apiSecret: string } {
@@ -169,7 +181,7 @@ export async function capturePrivateWs(opts: PrivateWsCaptureOptions = {}): Prom
   const windowMs = opts.windowMs ?? DEFAULT_PRIVATE_WS_WINDOW_MS
   const { apiKey, apiSecret } = requireTestnetCreds()
 
-  const ws = new WebsocketClient({ api_key: apiKey, api_secret: apiSecret, beautify: true, testnet: true })
+  const { wsPrivate: ws } = createBinanceClients(PLACEHOLDER_PROFILE, { apiKey, apiSecret }, { network: 'testnet' })
   const frames: unknown[] = []
   ws.on('formattedUserDataMessage', (msg) => frames.push(msg))
 
@@ -200,14 +212,11 @@ export async function captureOrders(outDir: string = `${FIXTURES_ROOT}/orders`):
   const { apiKey, apiSecret } = requireTestnetCreds()
   const clock = createRealClock()
 
-  const ccxt = new binanceusdm({
-    apiKey,
-    secret: apiSecret,
-    enableRateLimit: true,
-    options: { defaultType: 'swap', fetchCurrencies: false },
-  })
-  useTestnetHosts(ccxt)
-  const wsApi = new WebsocketAPIClient({ api_key: apiKey, api_secret: apiSecret, testnet: true })
+  const { ccxt, wsApiPrivate: wsApi } = createBinanceClients(
+    PLACEHOLDER_PROFILE,
+    { apiKey, apiSecret },
+    { network: 'testnet' },
+  )
 
   const clientOrderId = makeClientOrderId({ intentId: `capture-${clock.now()}`, leg: 'entry', attempt: 1 })
   const venueSymbol = 'BTCUSDT'
