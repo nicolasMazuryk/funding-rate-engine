@@ -23,7 +23,7 @@ the tier above cannot.
 | **Golden replay** | `test/golden/**` | a captured event trace still reproduces byte-identical transitions when replayed through the current core — regression net for core behavior changes | recorded trace fixture | fast | yes |
 | **Integration** | `test/integration/**` | a real adapter honors the `ExchangeAdapter` port against a real venue (testnet) or a real Postgres | Docker Postgres and/or venue testnet credentials | slower, networked | no — `npm run test:integration`, opt-in |
 | **Testnet** | per-venue, inside integration | venue-specific quirks (precision, error mapping, WS reconnect) hold against the real exchange, no money at risk | venue testnet keys | slower, networked | no |
-| **E2E** | `test/e2e/**` (reserved) | full instance wiring (scheduler → intent → execution → persistence → accounting) end to end | simulated venue + real Postgres + local WAL | medium | no (until populated) |
+| **E2E** | `test/e2e/**` | full instance wiring (scheduler → intent → execution → persistence) end to end | simulated venue + real Docker Postgres + real local WAL | medium | no — `npm run test:e2e`, opt-in |
 | **Live** | `0470`–`0500` harness | production behavior under real money, hard-capped | live keys, hard caps, auto-flatten | real money, slow | no — explicit command only, never automated |
 
 ## What each tier is for (when a task must add one)
@@ -42,8 +42,10 @@ the tier above cannot.
 - **Integration** is added by the task that builds a real adapter or persistence layer
   against its real dependency (Binance adapter tasks `0190`–`0260`, Postgres task
   `0080`/`0360`). Gated on credentials/Docker; never wired into default `verify`.
-- **E2E** is populated starting with the e2e harness task (`0270`), immediately before
-  the first real strategy, and grown per strategy (`0280`–`0350`).
+- **E2E** now exists (task `0270`): the harness in `test/e2e/harness.ts` boots a full
+  instance on the virtual clock + sim venue but real Docker Postgres + real local WAL.
+  Populated immediately before the first real strategy, and grown per strategy
+  (`0280`–`0350`) — one scenario file per strategy plugging into `harness.ts`.
 - **Live** is only ever run via the documented harness commands in tasks `0470`–`0500`
   — never scripted, automated, or expanded in scope by an unrelated task
   (`docs/plan/EXECUTION.md` "Live tiers" rule).
@@ -62,6 +64,7 @@ rule and enforcement: `test/CLAUDE.md` "Determinism rule".
 | `npm run verify` | typecheck + `biome check` + `npm run test` (unit + scenario + golden) — the universal gate |
 | `npm run test` | `vitest run` (unit + scenario + golden tiers only) |
 | `npm run test:integration` | `vitest run --config vitest.integration.config.ts` (needs `docker compose up` for Postgres) |
+| `npm run test:e2e` | `vitest run --config vitest.e2e.config.ts` — full-instance e2e tier (needs `docker compose up` for Postgres + local WAL) |
 | `npm run replay -- <trace> [--expect <golden>] [--json]` | replay a trace against the current core; see the `replay` skill |
 
 See the `verify`, `replay`, and `scenario` skills (`.claude/skills/`) for how to invoke

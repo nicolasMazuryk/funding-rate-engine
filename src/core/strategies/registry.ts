@@ -11,11 +11,12 @@
  */
 
 import type { StrategyId } from '../../config/canonical.js'
+import type { ExitPolicyKind } from '../intent/exit-policy.js'
 import type { FeeInputs } from '../runtime/cost-model.js'
 import type { Candidate } from '../runtime/finder.js'
 
-/** Exit-policy family a module uses; only `timed` exists in the skeleton (real policies 0300+). */
-export type ExitPolicyKind = 'timed'
+/** Exit-policy family a module uses. The kind union is owned by `exit-policy.ts` (single source of truth). */
+export type { ExitPolicyKind }
 
 /**
  * Engine-level runtime config passed to `select` and consumed by the engine

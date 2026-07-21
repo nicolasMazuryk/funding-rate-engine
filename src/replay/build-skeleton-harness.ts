@@ -22,6 +22,11 @@ import { createVirtualClock, type VirtualClock } from '../adapters/clock/virtual
 import { createSimExchange, type SimExchange } from '../adapters/sim/sim-exchange.js'
 import { computeConfigRevisionHash } from '../config/revision-hash.js'
 import { createEventBus } from '../core/events/bus.js'
+import {
+  createExitPolicyRegistry,
+  type ExitPolicyRegistry,
+  TIMED_PLACEHOLDER_HANDLER,
+} from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
 import type { Balance } from '../core/ports/exchange-adapter.js'
 import type { Repo } from '../core/ports/repo.js'
@@ -80,6 +85,8 @@ export interface BuildOpts {
   /** Timer source; the replay engine injects an inert one so recorded `Timer`s are the sole timer input. */
   readonly scheduler?: Scheduler
   readonly registry?: StrategyRegistry
+  /** Exit-policy dispatch table; defaults to the placeholder `timed` handler. Later strategy harnesses inject their own. */
+  readonly exitPolicyRegistry?: ExitPolicyRegistry
   readonly strategyConfig?: RuntimeStrategyConfig
   readonly riskGate?: RiskGate
   readonly killSwitch?: KillSwitch
@@ -98,6 +105,7 @@ export interface SkeletonHarness {
   readonly scheduler: Scheduler
   readonly engine: Engine
   readonly registry: StrategyRegistry
+  readonly exitPolicyRegistry: ExitPolicyRegistry
   readonly strategyConfig: RuntimeStrategyConfig
   readonly killSwitch: KillSwitch
   readonly trace?: TraceFile
@@ -111,6 +119,7 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
   const rawWal = createWalFile({ path: opts.walPath })
   const repo = opts.repo ?? createInMemoryRepo()
   const registry = opts.registry ?? createStrategyRegistry([createStubStrategy(DEFAULT_STUB_CONFIG)])
+  const exitPolicyRegistry = opts.exitPolicyRegistry ?? createExitPolicyRegistry([TIMED_PLACEHOLDER_HANDLER])
   const strategyConfig = opts.strategyConfig ?? DEFAULT_RUNTIME_CONFIG
   const logger = opts.logger ?? createLogger({ instance: 'skeleton' })
   const scheduler = opts.scheduler ?? createScheduler(clock, bus)
@@ -155,6 +164,7 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     wal,
     repo,
     registry,
+    exitPolicyRegistry,
     strategyConfig,
     riskGate,
     killSwitch,
@@ -172,6 +182,7 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     scheduler,
     engine,
     registry,
+    exitPolicyRegistry,
     strategyConfig,
     killSwitch,
     trace,

@@ -13,11 +13,23 @@ The load-bearing property is determinism: same inputs → same trace, every run.
 | Golden | `test/golden/**` | byte-compared fixtures | yes |
 | Integration | `test/integration/**` | Postgres (separate script) | no — excluded from default verify |
 | Testnet | `src/testnet/`, run via `npm run test:testnet` | venue testnet creds (skips clean without) | no — excluded from default verify |
-| E2E | `test/e2e/**` | reserved, empty | no |
+| E2E | `test/e2e/**` | sim venue + virtual clock + real Docker Postgres + real local WAL | no — `npm run test:e2e`, opt-in |
 
 `npm run verify` (typecheck + `biome check` + `vitest run`) is the gate; it runs the
 unit/scenario/golden tiers. Integration/e2e are opt-in and must never be wired into the
 default run.
+
+## E2E conventions (`test/e2e/`)
+
+- **Reuse `harness.ts`, don't re-wire.** `createE2eContext()` migrates + owns the admin
+  pool; `reset()` truncates the two tables and makes a fresh tmp WAL per test;
+  `bootInstance()` composes `buildSkeletonEngine` + real `createPgRepo` + `createForwarder`
+  and returns the DB/local-WAL accessors. Assertion helpers live in `assertions.ts`
+  (`expectTerminal`, `checkWalDbConsistency`, `expectTradeRecordShape`).
+- **One scenario file per strategy** from 0280 (`s1.e2e.test.ts`, …), each plugging its
+  own strategy + exit-policy registry into `bootInstance`. `skeleton.e2e.test.ts` is the
+  stub-strategy proving tier.
+- Needs Docker Postgres (`docker compose up -d`); never part of `npm run verify`.
 
 ## Scenario conventions (`test/scenarios/`)
 

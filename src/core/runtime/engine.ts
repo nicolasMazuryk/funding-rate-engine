@@ -16,14 +16,21 @@
  * symbol, deterministic `clientOrderId`, entry side/qty/fill, and the exact
  * `tDeadlineMs` — everything crash recovery needs to rebuild from the WAL alone.
  *
- * This is skeleton wiring, not the production runtime: the strategy is a stub
- * (0280), sizing is a fixed qty (real sizing 0280), and recovery covers only the
+ * This is skeleton wiring, not the production runtime: the strategy is a
+ * placeholder (0280), sizing is a fixed qty (real sizing 0280), and recovery covers only the
  * two skeleton states (full matrix 0370). Preflight (kill switch + risk gate +
  * balance/precision/account/market checks) lands here in 0140.
  */
 
 import type { KillSwitchState } from '../../config/env.js'
 import { assertNever, type EngineEvent, type FundingPredicted, type OrderUpdate, type Timer } from '../events/types.js'
+import type {
+  ExitPolicyContext,
+  ExitPolicyHandler,
+  ExitPolicyRegistry,
+  MonitoredEvent,
+  MonitoredIntent,
+} from '../intent/exit-policy.js'
 import {
   type ErrorCode,
   type ExitReason,
@@ -61,6 +68,8 @@ export interface EngineDeps {
   readonly repo: Repo
   /** Strategy dispatch table (Registry pattern, `08` §5) — the engine resolves the active module by `strategyConfig.id`. */
   readonly registry: StrategyRegistry
+  /** Exit-policy dispatch table (`12` §5) — the engine resolves the active module's `exitPolicyKind` handler. */
+  readonly exitPolicyRegistry: ExitPolicyRegistry
   /** Engine-level runtime config for the active strategy (threshold, direction, offset, hold, qty). */
   readonly strategyConfig: RuntimeStrategyConfig
   /** Risk gate evaluated in preflight (`13` §1). Defaults to always-allow. */
@@ -111,7 +120,7 @@ export type RecoveredIntent = IntentWalFields & {
   readonly state: IntentState
 }
 
-/** The reconciliation stub's finding: engine fill record vs venue ground truth (`15`, real reconciliation 0400). */
+/** The reconciliation placeholder's finding: engine fill record vs venue ground truth (`15`, real reconciliation 0400). */
 export interface ReconciliationRecord {
   readonly intentId: string
   readonly symbol: string
@@ -142,7 +151,11 @@ interface IntentRecord {
   readonly entryQty: number
   entryFillPx?: number
   entryFillQty?: number
+  /** Instant the entry filled (MONITORING entry), epoch ms — the exit policy's `enteredAtMs`. */
+  enteredAtMs?: number
   deadlineMs?: number
+  /** Exit reason the exit-policy handler commanded (stashed on `→ EXITING`, recorded on `→ CLOSED`). */
+  exitReason?: ExitReason
   /** Advisory cost-model breakdown captured at selection (task 0150); in-memory analytics only, never WAL'd. */
   costBreakdown?: ProfitBreakdown
 }
@@ -196,7 +209,7 @@ function resolveModule(registry: StrategyRegistry, id: RuntimeStrategyConfig['id
 }
 
 export function createEngine(deps: EngineDeps): Engine {
-  const { bus, clock, scheduler, exchange, wal, repo, registry, strategyConfig } = deps
+  const { bus, clock, scheduler, exchange, wal, repo, registry, strategyConfig, exitPolicyRegistry } = deps
   const riskGate: RiskGate = deps.riskGate ?? { check: () => ({ allowed: true }) }
   const killSwitch = deps.killSwitch ?? { state: (): KillSwitchState => 'off' }
   // Resolve the setup-readiness input to a uniform per-symbol predicate (bool → constant fn).
@@ -209,6 +222,18 @@ export function createEngine(deps: EngineDeps): Engine {
         )(deps.accountSetupComplete ?? true)
   // Fail loud on misconfiguration: an id with no registered module is a startup bug, not a runtime skip.
   const activeModule = resolveModule(registry, strategyConfig.id)
+  // Registry-driven exit dispatch (`12` §5): resolve the one handler for the active
+  // module's kind — a declared-but-unregistered kind is a startup bug, not a runtime skip.
+  const resolvedHandler = exitPolicyRegistry.get(activeModule.exitPolicyKind)
+  if (resolvedHandler === undefined) {
+    throw new Error(`Engine: no exit-policy handler registered for kind '${activeModule.exitPolicyKind}'`)
+  }
+  const exitHandler: ExitPolicyHandler = resolvedHandler
+  // The port subset a handler arms against — scheduler + clock, bound once.
+  const exitCtx: ExitPolicyContext = {
+    scheduleDeadline: (intentId, atMs) => void scheduler.scheduleDeadlineTimer(intentId, atMs),
+    now: () => clock.now(),
+  }
 
   const intents = new Map<string, IntentRecord>()
   const pendingOrders = new Map<string, PendingOrder>()
@@ -358,13 +383,38 @@ export function createEngine(deps: EngineDeps): Engine {
     void exchange.placeOrder({ symbol, side: rec.entrySide, type: 'market', qty: rec.entryQty, clientOrderId })
   }
 
-  function onDeadline(event: Timer): void {
-    const intentId = event.intentId
-    if (intentId === undefined) return
-    const rec = intents.get(intentId)
-    if (rec?.state !== 'MONITORING') return
+  /** Project a MONITORING intent record into the read-only shape the exit policy observes. */
+  function toMonitoredIntent(intentId: string, rec: IntentRecord): MonitoredIntent {
+    return {
+      intentId,
+      symbol: rec.symbol,
+      entrySide: rec.entrySide,
+      entryQty: rec.entryQty,
+      entryFillPx: rec.entryFillPx,
+      enteredAtMs: rec.enteredAtMs ?? clock.now(),
+      deadlineMs: rec.deadlineMs,
+    }
+  }
 
+  /** MONITORING intents an event targets: a deadline Timer → its one intent; a symbol event → all on that symbol. */
+  function exitTargets(event: MonitoredEvent): Array<[string, IntentRecord]> {
+    if (event.type === 'Timer') {
+      const intentId = event.intentId
+      if (intentId === undefined) return []
+      const rec = intents.get(intentId)
+      return rec ? [[intentId, rec]] : []
+    }
+    const targets: Array<[string, IntentRecord]> = []
+    for (const [intentId, rec] of intents) {
+      if (rec.state === 'MONITORING' && rec.symbol === event.symbol) targets.push([intentId, rec])
+    }
+    return targets
+  }
+
+  /** Fire the reduce-only exit for an intent the exit policy commanded closed. */
+  function fireExit(intentId: string, rec: IntentRecord, exitReason: ExitReason): void {
     const clientOrderId = makeClientOrderId({ intentId, leg: 'exit', attempt: 1 })
+    rec.exitReason = exitReason
     commit({ intentId, symbol: rec.symbol, from: 'MONITORING', to: 'EXITING', payload: {}, extras: { clientOrderId } })
     pendingOrders.set(clientOrderId, { intentId, leg: 'exit' })
     void exchange.placeOrder({
@@ -377,10 +427,19 @@ export function createEngine(deps: EngineDeps): Engine {
     })
   }
 
+  /** Route one MONITORING event through the active exit-policy handler; fire the exit on a decision (`12` §5). */
+  function dispatchToExitPolicy(event: MonitoredEvent): void {
+    for (const [intentId, rec] of exitTargets(event)) {
+      if (rec.state !== 'MONITORING') continue
+      const decision = exitHandler.onEvent(event, toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
+      if (decision !== undefined) fireExit(intentId, rec, decision.exitReason)
+    }
+  }
+
   function onTimer(event: Timer): void {
     if (event.kind === 'scan') onScan(event)
     else if (event.kind === 'entry') onEntry(event)
-    else onDeadline(event)
+    else dispatchToExitPolicy(event)
   }
 
   /** Adopt an entry fill (real update or recovered-and-confirmed): record it and advance to `MONITORING`. */
@@ -390,9 +449,12 @@ export function createEngine(deps: EngineDeps): Engine {
     fillPx: number | undefined,
     fillQty: number | undefined,
   ): void {
-    const deadlineMs = clock.now() + strategyConfig.holdMs
     rec.entryFillPx = fillPx
     rec.entryFillQty = fillQty
+    // On the live path `deadlineMs` is undefined here → the handler derives it from
+    // `enteredAtMs + holdMs`; on crash-recovery re-arm it is the recovered instant.
+    rec.enteredAtMs = rec.enteredAtMs ?? clock.now()
+    const deadlineMs = exitHandler.arm(toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
     rec.deadlineMs = deadlineMs
     commit({
       intentId,
@@ -402,7 +464,6 @@ export function createEngine(deps: EngineDeps): Engine {
       payload: {},
       extras: { entrySide: rec.entrySide, entryQty: rec.entryQty, entryFillPx: fillPx, tDeadlineMs: deadlineMs },
     })
-    scheduler.scheduleDeadlineTimer(intentId, deadlineMs)
   }
 
   function onEntryOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
@@ -421,7 +482,11 @@ export function createEngine(deps: EngineDeps): Engine {
   function onExitOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
     if (event.status !== 'FILLED') return
     pendingOrders.delete(event.clientOrderId)
-    commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason: 'timed' } })
+    // The exit reason was stashed by the exit-policy handler on `→ EXITING`; a fill
+    // with none recorded is a broken invariant, not a default (fail loud).
+    const exitReason = rec.exitReason
+    if (exitReason === undefined) throw new Error(`Engine: exit fill for '${intentId}' has no recorded exit reason`)
+    commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason } })
     void finishReconciliation(intentId)
   }
 
@@ -434,7 +499,7 @@ export function createEngine(deps: EngineDeps): Engine {
     else onExitOrderUpdate(event, pending.intentId, rec)
   }
 
-  /** Reconciliation stub: compare the engine's recorded entry fill against venue ground truth; log, never throw (0400 replaces). */
+  /** Reconciliation placeholder: compare the engine's recorded entry fill against venue ground truth; log, never throw (0400 replaces). */
   async function finishReconciliation(intentId: string): Promise<void> {
     const rec = intents.get(intentId)
     if (!rec) return
@@ -460,16 +525,21 @@ export function createEngine(deps: EngineDeps): Engine {
       case 'OrderUpdate':
         onOrderUpdate(event)
         return
-      // Latest price/balance feed the preflight snapshot (`12` §3).
+      // Latest price/balance feed the preflight snapshot (`12` §3); the tick also
+      // reaches the exit policy (a MONITORING event) via the registry.
       case 'MarketTick':
         latestPrice.set(event.symbol, event.price)
+        dispatchToExitPolicy(event)
         return
       case 'BalanceUpdate':
         latestBalance = { asset: event.asset, free: event.free, used: event.used }
         return
+      // The funding-fee accrual is a MONITORING event — route it through the exit policy.
+      case 'FundingFeeAccrued':
+        dispatchToExitPolicy(event)
+        return
       // Not consumed by the skeleton yet — explicit no-ops keep the switch exhaustive.
       case 'FundingSettled':
-      case 'FundingFeeAccrued':
       case 'PositionUpdate':
       // Orphan handling is the risk layer's job (0380), which subscribes directly.
       case 'OrphanDetected':
@@ -523,7 +593,9 @@ export function createEngine(deps: EngineDeps): Engine {
     // Reconcile qty against venue ground truth — do NOT replace the live order.
     const positions = await exchange.getPositions()
     rec.entryFillQty = positions.find((p) => p.symbol === r.symbol)?.qty ?? r.entryQty
-    if (r.tDeadlineMs !== undefined) scheduler.scheduleDeadlineTimer(r.intentId, r.tDeadlineMs)
+    // Re-arm through the handler: passing the recovered `deadlineMs` makes the timed
+    // policy schedule at the recovered instant, not `now + holdMs`.
+    if (r.tDeadlineMs !== undefined) exitHandler.arm(toMonitoredIntent(r.intentId, rec), strategyConfig, exitCtx)
   }
 
   const unsubscribe: Unsubscribe = bus.subscribe(dispatch)
