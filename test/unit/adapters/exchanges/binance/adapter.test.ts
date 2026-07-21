@@ -1,4 +1,4 @@
-import type { Balances, FundingRate, FundingRateHistory, Order, Position, Ticker } from 'ccxt'
+import type { Balances, FundingRate, FundingRateHistory, FundingRates, Order, Position, Ticker } from 'ccxt'
 import { describe, expect, it } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createBinanceAdapter } from '../../../../../src/adapters/exchanges/binance/adapter.js'
@@ -9,7 +9,7 @@ import { loadMarkets } from './fixtures.js'
 const HOUR_MS = 3_600_000
 
 /** A fixture-backed fake with a swappable market set and a load counter. */
-function makeClient(initial: readonly string[]) {
+function makeClient(initial: readonly string[], intervalsByVenueSymbol: Readonly<Record<string, number>> = {}) {
   let stems = [...initial]
   let loads = 0
   const client: BinanceMarketClient = {
@@ -52,13 +52,27 @@ function makeClient(initial: readonly string[]) {
     fetchOpenOrders() {
       return Promise.resolve([])
     },
+    fetchFundingRates(symbols) {
+      const out: FundingRates = {}
+      for (const symbol of symbols ?? []) {
+        out[symbol] = { symbol, info: { symbol }, fundingRate: -0.0005, timestamp: 1_000 } as FundingRate
+      }
+      return Promise.resolve(out)
+    },
+    fetchFundingIntervals() {
+      const out: FundingRates = {}
+      for (const [venue, hours] of Object.entries(intervalsByVenueSymbol)) {
+        out[venue] = { symbol: venue, info: { symbol: venue, fundingIntervalHours: hours } } as FundingRate
+      }
+      return Promise.resolve(out)
+    },
   }
   return { client, setStems: (s: string[]) => (stems = s), loads: () => loads }
 }
 
 /** Let the fire-and-forget reload's resolved-promise chain settle. */
 const flush = async (): Promise<void> => {
-  for (let i = 0; i < 4; i++) await Promise.resolve()
+  for (let i = 0; i < 8; i++) await Promise.resolve()
 }
 
 describe('createBinanceAdapter', () => {
@@ -103,6 +117,18 @@ describe('createBinanceAdapter', () => {
     const adapter = createBinanceAdapter({ client, clock, deny: ['PEPE'] })
     await adapter.init()
     expect(adapter.markets().map((m) => m.normalized)).toEqual(['BTC'])
+  })
+
+  it('init sources fundingIntervalHours from fetchFundingIntervals, overriding market.info (SUGGESTIONS L13)', async () => {
+    const clock = createVirtualClock(0)
+    // `funding-4h` fixture (id AAVEUSDT) carries 4h in market.info; fundingInfo overrides to 2h.
+    const { client } = makeClient(['clean-perp-btc', 'funding-4h'], { AAVEUSDT: 2 })
+    const adapter = createBinanceAdapter({ client, clock })
+    await adapter.init()
+    // AAVE's fundingInfo override (2h) wins over market.info's 4h.
+    expect(adapter.normalize('AAVE').fundingIntervalHours).toBe(2)
+    // BTC is absent from the fundingInfo response → stays at market.info's 8h default.
+    expect(adapter.normalize('BTC').fundingIntervalHours).toBe(8)
   })
 
   it('maps predictedFunding to signed percent + epoch ms', async () => {

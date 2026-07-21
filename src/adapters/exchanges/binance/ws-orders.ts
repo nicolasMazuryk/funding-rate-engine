@@ -34,12 +34,14 @@ import { mapBinanceError } from './error-map.js'
 /** Default WS ack timeout — the lib has no per-request timer, so we impose one (`10` §5 `WsTimeout`). */
 const WS_ACK_TIMEOUT_MS = 5_000
 /**
- * Order-lane weights (`10` §6) — placeholders in the same pattern as the general-lane
- * weights; real Binance per-endpoint order weights → SUGGESTIONS.
+ * Order-lane weights (`10` §6) — real published Binance fapi request weights (`POST
+ * order`/`DELETE order`), cross-checked against `ccxt.binanceusdm().describe().api
+ * .fapiPrivate.{post,delete}` cost tables. The native WS-API order endpoints mirror
+ * their REST equivalents 1:1, so the same weights apply to the WS submit/cancel path.
  */
-const WEIGHT_WS_ORDER = 1
+const WEIGHT_WS_ORDER = 4
 const WEIGHT_WS_CANCEL = 1
-const WEIGHT_REST_ORDER = 1
+const WEIGHT_REST_ORDER = 4
 
 /** The slice of the native `WebsocketAPIClient` the transport calls (USD-M futures orders). */
 export interface BinanceWsOrderClient {

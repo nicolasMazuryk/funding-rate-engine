@@ -111,13 +111,15 @@ function makeBus(): { bus: EventBus; events: EngineEvent[] } {
 }
 
 function build(overrides?: {
-  restFunding?: (symbol: string) => Promise<Rate>
+  restFundingAll?: () => Promise<ReadonlyMap<string, Rate>>
   restTicker?: (symbol: string) => Promise<TickerReading>
 }) {
   const clock = createVirtualClock(0)
   const ws = makeFakeWs()
   const { bus, events } = makeBus()
-  const restFunding = overrides?.restFunding ?? ((symbol: string) => Promise.resolve({ symbol, rate: 0.02, ts: 500 }))
+  const restFundingAll =
+    overrides?.restFundingAll ??
+    (() => Promise.resolve(new Map([['BTCUSDT', { symbol: 'BTCUSDT', rate: 0.02, ts: 500 }]])))
   const restTicker = overrides?.restTicker ?? ((_symbol: string) => Promise.resolve({ price: 61_000, ts: 700 }))
   const stream = createBinancePublicStream({
     ws,
@@ -125,7 +127,7 @@ function build(overrides?: {
     clock,
     resolveCanonical: resolveAny,
     resolveVenue: (symbol) => CANONICAL_TO_VENUE[symbol] ?? symbol,
-    restFunding,
+    restFundingAll,
     restTicker,
   })
   return { clock, ws, bus, events, stream }
@@ -202,37 +204,56 @@ describe('createBinancePublicStream — live WS flow', () => {
 describe('createBinancePublicStream — disconnect / fallback / reprime', () => {
   it('polls REST while degraded and stops on recover, reprime before resume', async () => {
     const order: string[] = []
-    const restFunding = vi.fn((symbol: string) => {
+    const restFundingAll = vi.fn(() => {
       order.push('rest-funding')
-      return Promise.resolve<Rate>({ symbol, rate: 0.02, ts: 500 })
+      return Promise.resolve<ReadonlyMap<string, Rate>>(
+        new Map([['BTCUSDT', { symbol: 'BTCUSDT', rate: 0.02, ts: 500 }]]),
+      )
     })
-    const { clock, ws, events, stream } = build({ restFunding })
+    const { clock, ws, events, stream } = build({ restFundingAll })
     await stream.subscribe(['BTC'])
 
-    // Disconnect → degraded: one immediate fallback poll publishes FundingPredicted via REST.
+    // Disconnect → degraded: one immediate fallback poll (one bulk call) publishes FundingPredicted via REST.
     ws.emit('reconnecting', {})
     await flush()
-    expect(restFunding).toHaveBeenCalledTimes(1)
+    expect(restFundingAll).toHaveBeenCalledTimes(1)
     expect(events).toContainEqual({ type: 'FundingPredicted', symbol: 'BTC', rate: 0.02, ts: 500 })
 
     // Poll self-reschedules on the virtual clock while still degraded.
     clock.advanceBy(15_000)
     await flush()
-    expect(restFunding).toHaveBeenCalledTimes(2)
+    expect(restFundingAll).toHaveBeenCalledTimes(2)
 
     // Reconnect → reprime (one more REST snapshot) BEFORE the fallback stops.
     ws.emit('reconnected', {})
     await flush()
-    const reprimeCount = restFunding.mock.calls.length
+    const reprimeCount = restFundingAll.mock.calls.length
     expect(reprimeCount).toBe(3) // the reprime snapshot
 
     // Once live, the fallback poll no longer fires on further clock advances.
     clock.advanceBy(15_000 * 5)
     await flush()
-    expect(restFunding).toHaveBeenCalledTimes(reprimeCount)
+    expect(restFundingAll).toHaveBeenCalledTimes(reprimeCount)
 
-    // Ordering sanity: every REST call is a fallback/reprime; the last precedes resume.
+    // Ordering sanity: every REST call is one bulk fallback/reprime snapshot, not a per-symbol fan-out.
     expect(order.filter((o) => o === 'rest-funding').length).toBe(reprimeCount)
+  })
+
+  it('bulk poll gates each returned symbol to the subscribed funding universe (SUGGESTIONS L21)', async () => {
+    const restFundingAll = () =>
+      Promise.resolve<ReadonlyMap<string, Rate>>(
+        new Map([
+          ['BTCUSDT', { symbol: 'BTCUSDT', rate: 0.02, ts: 500 }],
+          ['DOGEUSDT', { symbol: 'DOGEUSDT', rate: 0.09, ts: 500 }], // not in registry
+        ]),
+      )
+    const { ws, events, stream } = build({ restFundingAll })
+    await stream.subscribe(['BTC']) // PEPE resolves in the registry but is not subscribed here
+
+    ws.emit('reconnecting', {})
+    await flush()
+
+    expect(events).toEqual([{ type: 'FundingPredicted', symbol: 'BTC', rate: 0.02, ts: 500 }])
   })
 })
 

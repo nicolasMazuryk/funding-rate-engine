@@ -16,6 +16,7 @@ import {
   binanceusdm,
   type FundingRate,
   type FundingRateHistory,
+  type FundingRates,
   type MarketInterface,
   type Order,
   type Position,
@@ -40,6 +41,10 @@ export interface BinanceMarketClient {
   setPositionMode(hedged: boolean, symbol?: string, params?: Record<string, unknown>): Promise<unknown>
   fetchFundingRate(symbol: string): Promise<FundingRate>
   fetchFundingRateHistory(symbol: string, since?: number, limit?: number): Promise<FundingRateHistory[]>
+  /** Bulk predicted-funding read (all-symbol `premiumIndex`) — the fallback poll/reprime, SUGGESTIONS L21. */
+  fetchFundingRates(symbols?: string[], params?: Record<string, unknown>): Promise<FundingRates>
+  /** Per-symbol funding interval (`fapi/v1/fundingInfo`) — entries only for non-8h symbols, SUGGESTIONS L13. */
+  fetchFundingIntervals(symbols?: string[], params?: Record<string, unknown>): Promise<FundingRates>
   /** Last-price read for the public-stream tick REST fallback (0210). */
   fetchTicker(symbol: string): Promise<Ticker>
   /** Account-wide open positions — private-stream reprime + degraded poll (0220). */

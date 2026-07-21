@@ -45,21 +45,23 @@ import { type BinanceRestOrderClient, type BinanceWsOrderClient, createBinanceOr
 const HOUR_MS = 3_600_000
 
 /**
- * General-lane weights (`10` §6). `loadMarkets` pulls the full exchangeInfo payload so
- * it is heavier; the funding reads are single-symbol REST — weight 1. Placeholders
- * correctable when ccxt-reported per-endpoint weights are wired.
+ * General-lane weights (`10` §6) — real published Binance USDⓈ-M fapi request weights,
+ * cross-checked against `ccxt.binanceusdm().describe().api.fapiPublic*`/`fapiPrivate*`
+ * cost tables: `exchangeInfo`/`premiumIndex`/`fundingInfo`/`ticker24hr`(symbol)/`order`
+ * query = 1; `account`/`positionRisk` (ccxt's v2 endpoints) = 1; `openOrders` with no
+ * symbol (account-wide) = 40.
  */
-const WEIGHT_LOAD_MARKETS = 20
+const WEIGHT_LOAD_MARKETS = 1
 const WEIGHT_FUNDING = 1
+/** Bulk `premiumIndex` (no symbol) — same flat weight as the single-symbol read on USDⓈ-M. */
+const WEIGHT_FUNDING_ALL = 1
+/** `fapi/v1/fundingInfo` — per-symbol funding interval read (SUGGESTIONS L13). */
+const WEIGHT_FUNDING_INFO = 1
 /** Single-symbol ticker read — the tick REST fallback poll (weight 1, general lane). */
 const WEIGHT_TICKER = 1
-/**
- * Account-read weights for the private-stream reprime + `getPositions`/`getBalance`/
- * `getOrder` (0220). Placeholders in the general-lane pattern; real ccxt per-endpoint
- * weights → SUGGESTIONS (`fetchOpenOrders` is genuinely heavy account-wide).
- */
-const WEIGHT_POSITIONS = 5
-const WEIGHT_BALANCE = 5
+/** Account-read weights for the private-stream reprime + `getPositions`/`getBalance`/`getOrder` (0220). */
+const WEIGHT_POSITIONS = 1
+const WEIGHT_BALANCE = 1
 const WEIGHT_OPEN_ORDERS = 40
 const WEIGHT_GET_ORDER = 1
 /** Account-setup writes (`setLeverage`/`setMarginMode`/`setPositionMode`) — general lane, weight 1. */
@@ -192,10 +194,28 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   let venueToNormalized = new Map<string, string>()
   let reloadHandle: TimerHandle | undefined
 
+  /**
+   * True per-symbol funding interval (`fapi/v1/fundingInfo`, SUGGESTIONS L13), keyed by
+   * venue symbol. ccxt returns entries only for symbols whose interval differs from the
+   * 8h default, so absent symbols fall back through `market.info`/8h in `instrument.ts`.
+   */
+  async function readFundingIntervals(): Promise<Map<string, number>> {
+    const rates = await callGeneral(WEIGHT_FUNDING_INFO, () => client.fetchFundingIntervals())
+    const out = new Map<string, number>()
+    for (const fr of Object.values(rates)) {
+      const info = fr.info as { symbol?: unknown; fundingIntervalHours?: unknown } | undefined
+      const venue = typeof info?.symbol === 'string' ? info.symbol : undefined
+      const hours = typeof info?.fundingIntervalHours === 'number' ? info.fundingIntervalHours : undefined
+      if (venue !== undefined && hours !== undefined) out.set(venue, hours)
+    }
+    return out
+  }
+
   /** Load + validate markets into a fresh registry, then swap the reference in. */
   async function reloadRegistry(): Promise<void> {
     const markets = await callGeneral(WEIGHT_LOAD_MARKETS, () => client.loadMarkets())
-    const next = buildInstrumentRegistry(Object.values(markets), deny)
+    const intervals = await readFundingIntervals()
+    const next = buildInstrumentRegistry(Object.values(markets), deny, intervals)
     const reverse = new Map<string, string>()
     for (const inst of next.values()) reverse.set(inst.venueSymbol, inst.normalized)
     instruments = next
@@ -239,6 +259,24 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   async function readPredictedFunding(symbol: string): Promise<Rate> {
     const fr = await callGeneral(WEIGHT_FUNDING, () => client.fetchFundingRate(venueSymbol(symbol)))
     return { symbol, rate: toSignedPercent(fr.fundingRate), ts: fr.timestamp ?? clock.now() }
+  }
+
+  /**
+   * Bulk predicted-funding REST read (all-symbol `premiumIndex`, SUGGESTIONS L21) —
+   * collapses the public stream's fallback poll/reprime from N weight-1 per-symbol
+   * calls into one. Keyed by venue symbol (raw); the stream resolves + gates each key
+   * to its subscribed universe (`public-stream.ts` `resolveFunding`).
+   */
+  async function readAllPredictedFunding(): Promise<Map<string, Rate>> {
+    const rates = await callGeneral(WEIGHT_FUNDING_ALL, () => client.fetchFundingRates())
+    const out = new Map<string, Rate>()
+    for (const fr of Object.values(rates)) {
+      const info = fr.info as { symbol?: unknown } | undefined
+      const venue = typeof info?.symbol === 'string' ? info.symbol : undefined
+      if (venue === undefined) continue
+      out.set(venue, { symbol: venue, rate: toSignedPercent(fr.fundingRate), ts: fr.timestamp ?? clock.now() })
+    }
+    return out
   }
 
   /** Last-price REST read for the public stream's tick fallback/reprime. */
@@ -355,7 +393,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
           clock,
           resolveCanonical: (venue) => venueToNormalized.get(venue),
           resolveVenue: venueSymbol,
-          restFunding: readPredictedFunding,
+          restFundingAll: readAllPredictedFunding,
           restTicker: readTicker,
         })
       : unwiredPublicStream()

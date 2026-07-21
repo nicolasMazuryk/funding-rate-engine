@@ -48,8 +48,12 @@ function readFundingIntervalHours(info: unknown): number {
  * Map one ccxt market to a validated {@link Instrument}, or **throw** on any anomaly
  * (unparsable symbol, missing/zero contract size or precision, out-of-set funding
  * interval). Every throw carries the venue symbol so a bad startup pinpoints it.
+ *
+ * `intervalHoursOverride` — the true per-symbol interval sourced from Binance
+ * `fapi/v1/fundingInfo` (SUGGESTIONS L13; ccxt returns entries only for symbols whose
+ * interval differs from the 8h default). Precedence: override → `market.info` → 8h.
  */
-export function ccxtMarketToInstrument(market: MarketInterface): Instrument {
+export function ccxtMarketToInstrument(market: MarketInterface, intervalHoursOverride?: number): Instrument {
   const venueSymbol = market.id
   if (typeof venueSymbol !== 'string' || venueSymbol.length === 0) {
     throw new Error(`Binance instrument: market has no venue id (symbol '${market.symbol ?? '?'}')`)
@@ -71,7 +75,7 @@ export function ccxtMarketToInstrument(market: MarketInterface): Instrument {
     throw new Error(`${at}: missing or non-positive amount precision (${String(market.precision.amount)})`)
   }
 
-  const fundingIntervalHours = readFundingIntervalHours(market.info)
+  const fundingIntervalHours = intervalHoursOverride ?? readFundingIntervalHours(market.info)
   if (!VALID_FUNDING_INTERVALS.has(fundingIntervalHours)) {
     throw new Error(`${at}: funding interval ${fundingIntervalHours}h ∉ {1,2,4,8}`)
   }
@@ -117,15 +121,22 @@ export function filterMarkets(
  * start), so the **plain (lowest-multiplier) listing wins**, deterministically
  * regardless of ccxt ordering; the folded duplicate is dropped. This is a known
  * ambiguity flagged for a real disambiguation policy (STATUS/SUGGESTIONS).
+ *
+ * `intervalHoursByVenueSymbol` — the `fapi/v1/fundingInfo` read (SUGGESTIONS L13),
+ * keyed by venue symbol; absent entries fall back to `market.info`/8h per market.
  */
 export function buildInstrumentRegistry(
   markets: readonly (MarketInterface | undefined)[],
   deny: readonly string[] = [],
+  intervalHoursByVenueSymbol?: ReadonlyMap<string, number>,
 ): Map<string, Instrument> {
   const registry = new Map<string, Instrument>()
   const chosenMultiplier = new Map<string, number>()
   for (const market of filterMarkets(markets, deny)) {
-    const instrument = ccxtMarketToInstrument(market)
+    const instrument = ccxtMarketToInstrument(
+      market,
+      market.id !== undefined ? intervalHoursByVenueSymbol?.get(market.id) : undefined,
+    )
     const multiplier = normalizeSymbol(market.base).multiplier
     const existing = chosenMultiplier.get(instrument.normalized)
     if (existing !== undefined && multiplier >= existing) continue // keep the plainer listing

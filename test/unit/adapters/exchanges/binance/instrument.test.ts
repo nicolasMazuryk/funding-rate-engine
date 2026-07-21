@@ -75,6 +75,19 @@ describe('ccxtMarketToInstrument denomination', () => {
   it('reads a non-default funding interval from market metadata', () => {
     expect(ccxtMarketToInstrument(loadMarket('funding-4h')).fundingIntervalHours).toBe(4)
   })
+
+  it('an fundingInfo override takes precedence over market.info (SUGGESTIONS L13)', () => {
+    // `funding-4h` fixture carries 4h in market.info; a fundingInfo override of 2h wins.
+    expect(ccxtMarketToInstrument(loadMarket('funding-4h'), 2).fundingIntervalHours).toBe(2)
+  })
+
+  it('falls back to market.info when no fundingInfo override is given (absent-from-response symbol)', () => {
+    expect(ccxtMarketToInstrument(loadMarket('clean-perp-btc'), undefined).fundingIntervalHours).toBe(8)
+  })
+
+  it('an out-of-set fundingInfo override throws (fail-loud, `10` §4)', () => {
+    expect(() => ccxtMarketToInstrument(loadMarket('clean-perp-btc'), 3)).toThrow(/∉ \{1,2,4,8\}/)
+  })
 })
 
 describe('ccxtMarketToInstrument fail-loud (10 §4)', () => {

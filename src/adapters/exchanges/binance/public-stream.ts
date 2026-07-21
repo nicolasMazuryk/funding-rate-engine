@@ -86,8 +86,12 @@ export interface BinancePublicStreamDeps {
   resolveCanonical(venueSymbol: string): string | undefined
   /** Canonical name → exact venue string, for building per-symbol tick topics. */
   resolveVenue(symbol: string): string
-  /** REST predicted-funding read (adapter `predictedFunding`) — the funding fallback/reprime source. */
-  restFunding(symbol: string): Promise<Rate>
+  /**
+   * Bulk predicted-funding read (adapter's all-symbol `premiumIndex`, SUGGESTIONS L21)
+   * — one call replaces the per-symbol funding fan-out in the fallback poll/reprime.
+   * Keyed by venue symbol; gated to the subscribed universe via `resolveFunding` before publish.
+   */
+  restFundingAll(): Promise<ReadonlyMap<string, Rate>>
   /** REST last-price read — the tick fallback/reprime source. */
   restTicker(symbol: string): Promise<TickerReading>
 }
@@ -98,7 +102,7 @@ function aggTradeTopic(venueSymbol: string): string {
 }
 
 export function createBinancePublicStream(deps: BinancePublicStreamDeps): PublicStream {
-  const { ws, bus, clock, resolveCanonical, resolveVenue, restFunding, restTicker } = deps
+  const { ws, bus, clock, resolveCanonical, resolveVenue, restFundingAll, restTicker } = deps
 
   // Subscribed sets (canonical). Funding gates the array stream; ticks track the shortlist.
   const fundingUniverse = new Set<string>()
@@ -137,8 +141,10 @@ export function createBinancePublicStream(deps: BinancePublicStreamDeps): Public
 
   /** One REST snapshot pass over the subscribed sets — reused by the fallback poll and reprime. */
   async function pollOnce(): Promise<void> {
-    for (const symbol of fundingUniverse) {
-      const rate = await restFunding(symbol)
+    const funding = await restFundingAll()
+    for (const [venueSymbol, rate] of funding) {
+      const symbol = resolveFunding(venueSymbol)
+      if (symbol === undefined) continue
       bus.publish({ type: 'FundingPredicted', symbol, rate: rate.rate, ts: rate.ts })
     }
     for (const symbol of tickSymbols) {
