@@ -20,13 +20,19 @@ import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
 import { createSimExchange } from './adapters/sim/sim-exchange.js'
-import { runtimeConfigFromEffective, type S1EngineDeps, wireS1Engine, wireS1WsEngine } from './composition.js'
+import {
+  runtimeConfigFromEffective,
+  type S1EngineDeps,
+  wireS1Engine,
+  wireS1WsEngine,
+  wireS2Engine,
+} from './composition.js'
 import type { EffectiveConfig } from './config/effective-config.js'
 import { createInstrumentValidationHook } from './config/instrument-validation.js'
 import { loadEffectiveConfig } from './config/load.js'
 import { createEventBus } from './core/events/bus.js'
 import type { Clock } from './core/ports/clock.js'
-import type { ExchangeAdapter } from './core/ports/exchange-adapter.js'
+import type { ExchangeAdapter, TimeRange } from './core/ports/exchange-adapter.js'
 import { createScheduler } from './core/runtime/scheduler.js'
 import type { Instance } from './persistence/db/instance.js'
 import { createPgRepo } from './persistence/db/repo.js'
@@ -86,8 +92,9 @@ async function run(): Promise<void> {
   const killSwitch = createKillSwitch({ initial: cfg.killSwitch, clock, wal })
   const scheduler = createScheduler(clock, bus)
   // Select the strategy wiring by `cfg.strategy` (Registry pattern at the composition edge):
-  // `s1` → the `timed` exit; `s1-ws` → the `funding_fee_event` gate. The WS-mandatory guard
-  // already ran in `load.ts` (`checkWsMandatoryGuard`), so s1-ws only reaches here validly.
+  // `s1` → the `timed` exit; `s1-ws` → the `funding_fee_event` gate; `s2` → the trailing
+  // retracement gate. The WS-mandatory guard already ran in `load.ts` (`checkWsMandatoryGuard`),
+  // so the WS-gated strategies only reach here validly.
   const engineDeps: S1EngineDeps = {
     bus,
     clock,
@@ -101,10 +108,13 @@ async function run(): Promise<void> {
     initialBalance,
     onReconciliation: (record) => logger.info({ reconciliation: record }, 'reconciliation'),
   }
+  const gateDeps = { clock, fundingIncome: (symbol: string, range: TimeRange) => adapter.fundingIncome(symbol, range) }
   const engine =
-    cfg.strategy === 's1-ws'
-      ? wireS1WsEngine(engineDeps, { clock, fundingIncome: (symbol, range) => adapter.fundingIncome(symbol, range) })
-      : wireS1Engine(engineDeps)
+    cfg.strategy === 's2'
+      ? wireS2Engine(engineDeps, gateDeps)
+      : cfg.strategy === 's1-ws'
+        ? wireS1WsEngine(engineDeps, gateDeps)
+        : wireS1Engine(engineDeps)
 
   scheduler.start()
   logger.info('instance running')

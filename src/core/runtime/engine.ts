@@ -25,6 +25,7 @@
 import type { KillSwitchState } from '../../config/env.js'
 import { assertNever, type EngineEvent, type FundingPredicted, type OrderUpdate, type Timer } from '../events/types.js'
 import type {
+  ExitLegRequest,
   ExitPolicyContext,
   ExitPolicyHandler,
   ExitPolicyRegistry,
@@ -46,7 +47,7 @@ import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-ad
 import type { Repo } from '../ports/repo.js'
 import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
-import { computeQty } from '../sizing/sizing.js'
+import { capReduceOnlyQty, computeQty, roundPrice } from '../sizing/sizing.js'
 import type { RuntimeStrategyConfig, StrategyModule, StrategyRegistry } from '../strategies/registry.js'
 import { evaluateProfitCondition, type ProfitBreakdown } from './cost-model.js'
 import { type FindCandidatesInput, findCandidates } from './finder.js'
@@ -165,6 +166,8 @@ interface IntentRecord {
   settleTs?: number
   /** Funding-accrual verdict (`00_globals.md` §3.1): entry fill landed before `T_settle`. Set on `→ MONITORING`. */
   fundingReceived?: boolean
+  /** Reference price at entry-decision time (`latestPrice` at `onEntry`) — S2's retracement anchor (`03` §2). In-memory only. */
+  anchorPrice?: number
   deadlineMs?: number
   /** Exit reason the exit-policy handler commanded (stashed on `→ EXITING`, recorded on `→ CLOSED`). */
   exitReason?: ExitReason
@@ -172,10 +175,14 @@ interface IntentRecord {
   costBreakdown?: ProfitBreakdown
 }
 
-/** `pendingOrders` value: which intent/leg a `clientOrderId` belongs to. */
+/**
+ * `pendingOrders` value: which intent/leg a `clientOrderId` belongs to. `exit-policy`
+ * is a handler-owned resting reduce-only leg (S2's SL/TP); the post-exit sweep cancels
+ * it and its updates route to `exitHandler.onOrderUpdate`.
+ */
 interface PendingOrder {
   readonly intentId: string
-  readonly leg: 'entry' | 'exit'
+  readonly leg: 'entry' | 'exit' | 'exit-policy'
 }
 
 /**
@@ -253,6 +260,29 @@ export function createEngine(deps: EngineDeps): Engine {
     requestExit: (intentId, exitReason) => {
       const rec = intents.get(intentId)
       if (rec?.state === 'MONITORING') fireExit(intentId, rec, exitReason)
+    },
+    placeExitLeg: (intentId, req) => placeExitLeg(intentId, req),
+    cancelExitLeg: (clientOrderId) => {
+      pendingOrders.delete(clientOrderId)
+      // Best-effort: a since-filled/unknown order throws; the order manager reconciles by
+      // venue truth on a cancel/fill race (`03` line 21).
+      void exchange.cancelOrder(clientOrderId).catch(() => {})
+    },
+    confirmClose: (intentId, exitReason, filledClientOrderId) => {
+      const rec = intents.get(intentId)
+      if (rec?.state !== 'MONITORING') return // idempotent: a raced/late close no-ops
+      rec.exitReason = exitReason
+      pendingOrders.delete(filledClientOrderId)
+      // Fill already in hand: MONITORING → EXITING → CLOSED in one step, then sweep the sibling.
+      commit({
+        intentId,
+        symbol: rec.symbol,
+        from: 'MONITORING',
+        to: 'EXITING',
+        payload: {},
+        extras: { clientOrderId: filledClientOrderId },
+      })
+      closeFromExiting(intentId, rec, exitReason)
     },
   }
 
@@ -399,6 +429,9 @@ export function createEngine(deps: EngineDeps): Engine {
       entrySide: ENTRY_SIDE,
       entryQty: qty,
       settleTs: settleBySymbol.get(symbol),
+      // Reference price at entry-decision time (`03` §2 R8): the retracement anchor S2 trails
+      // toward. Captured here (≈ best ask ≈ latest price at entry), held in-memory only.
+      anchorPrice: price,
     }
     const stashedCost = costBySymbol.get(symbol)
     if (stashedCost !== undefined) rec.costBreakdown = stashedCost
@@ -432,9 +465,11 @@ export function createEngine(deps: EngineDeps): Engine {
       entrySide: rec.entrySide,
       entryQty: rec.entryQty,
       entryFillPx: rec.entryFillPx,
+      entryFillQty: rec.entryFillQty,
       enteredAtMs: rec.enteredAtMs ?? clock.now(),
       settleTs: rec.settleTs,
       deadlineMs: rec.deadlineMs,
+      anchorPrice: rec.anchorPrice,
     }
   }
 
@@ -467,6 +502,41 @@ export function createEngine(deps: EngineDeps): Engine {
       clientOrderId,
       reduceOnly: true,
     })
+  }
+
+  /**
+   * Place a handler-owned resting reduce-only leg (S2's SL stop / trailing TP limit).
+   * The engine assigns the deterministic id, rounds the price to the venue tick, caps the
+   * qty to the entry fill, and tracks it as an `exit-policy` leg — the intent stays
+   * MONITORING (a resting leg is not itself an exit). Returns the assigned `clientOrderId`.
+   */
+  function placeExitLeg(intentId: string, req: ExitLegRequest): string {
+    const rec = intents.get(intentId)
+    if (rec === undefined) throw new Error(`Engine: placeExitLeg for unknown intent '${intentId}'`)
+    const clientOrderId = makeClientOrderId({ intentId, leg: req.leg, attempt: req.attempt })
+    const instrument = exchange.normalize(rec.symbol)
+    const price = req.price === undefined ? undefined : roundPrice(req.price, instrument)
+    const qty = capReduceOnlyQty(req.qty, rec.entryFillQty ?? rec.entryQty)
+    pendingOrders.set(clientOrderId, { intentId, leg: 'exit-policy' })
+    void exchange.placeOrder({
+      symbol: rec.symbol,
+      side: EXIT_SIDE,
+      type: req.type,
+      qty,
+      price,
+      clientOrderId,
+      reduceOnly: true,
+    })
+    return clientOrderId
+  }
+
+  /** Record `→ CLOSED`, sweep any sibling reduce-only legs, and reconcile — the shared exit tail. */
+  function closeFromExiting(intentId: string, rec: IntentRecord, exitReason: ExitReason): void {
+    commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason } })
+    // Post-exit reduce-only sweep (`00_globals.md` §5.2, `01` §2 step 5): cancel the sibling
+    // legs still tracked open for this symbol (S2's SL/TP OCO); no-op on S1's market-exit path.
+    sweepReduceOnlyOrders(intentId, rec.symbol)
+    void finishReconciliation(intentId)
   }
 
   /** Route one MONITORING event through the active exit-policy handler; fire the exit on a decision (`12` §5). */
@@ -540,13 +610,13 @@ export function createEngine(deps: EngineDeps): Engine {
     // with none recorded is a broken invariant, not a default (fail loud).
     const exitReason = rec.exitReason
     if (exitReason === undefined) throw new Error(`Engine: exit fill for '${intentId}' has no recorded exit reason`)
-    commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason } })
-    // Post-exit reduce-only sweep (`00_globals.md` §5.2, `01` §2 step 5): cancel any
-    // reduce-only orders the engine still tracks open for this symbol. No-op on S1's
-    // happy path (the market exit already filled and cleared `pendingOrders`); it exists
-    // and runs so the resting-order strategies (0310+) inherit the seam.
-    sweepReduceOnlyOrders(intentId, rec.symbol)
-    void finishReconciliation(intentId)
+    closeFromExiting(intentId, rec, exitReason)
+  }
+
+  /** Route an update on a handler-owned resting leg (S2's SL/TP) to the exit policy; a fill drives the OCO close. */
+  function onExitPolicyOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
+    if (rec.state !== 'MONITORING') return
+    exitHandler.onOrderUpdate?.(event, toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
   }
 
   /**
@@ -556,7 +626,7 @@ export function createEngine(deps: EngineDeps): Engine {
    */
   function sweepReduceOnlyOrders(intentId: string, symbol: string): void {
     for (const [clientOrderId, pending] of [...pendingOrders]) {
-      if (pending.leg !== 'exit') continue
+      if (pending.leg !== 'exit' && pending.leg !== 'exit-policy') continue
       if (intents.get(pending.intentId)?.symbol !== symbol) continue
       pendingOrders.delete(clientOrderId)
       // Best-effort: a since-filled/unknown order throws — swallow it, the intent is CLOSED.
@@ -571,7 +641,8 @@ export function createEngine(deps: EngineDeps): Engine {
     const rec = intents.get(pending.intentId)
     if (!rec) return
     if (pending.leg === 'entry') onEntryOrderUpdate(event, pending.intentId, rec)
-    else onExitOrderUpdate(event, pending.intentId, rec)
+    else if (pending.leg === 'exit') onExitOrderUpdate(event, pending.intentId, rec)
+    else onExitPolicyOrderUpdate(event, pending.intentId, rec)
   }
 
   /** Reconciliation placeholder: compare the engine's recorded entry fill against venue ground truth; log, never throw (0400 replaces). */

@@ -33,8 +33,14 @@ export interface RuntimeStrategyConfig {
   readonly entryOffsetSeconds: number
   /** Delay after `T_settle` at which the `timed` exit fires, seconds (`exit_offset_seconds`, S1). Absent for the WS-gated strategies (S1-WS/S2/S6). */
   readonly exitOffsetSeconds?: number
-  /** Gate timeout past `T_settle`, seconds (`funding_fee_timeout_seconds`, `02` §5). Present for the `funding_fee_event` policy. */
+  /** Gate timeout past `T_settle`, seconds (`funding_fee_timeout_seconds`, `02` §5). Present for the `funding_fee_event` + S2 policies. */
   readonly fundingFeeTimeoutSeconds?: number
+  /** Trailing-TP retracement fraction [0,1] (`retracement_pct`, `03` §5 — the lone fraction key). S2 only. */
+  readonly retracementPct?: number
+  /** SL distance multiplier on `|F|` (`sl_multiplier`, `03` §5). S2 only. */
+  readonly slMultiplier?: number
+  /** Deadline horizon past `T_settle`, seconds (`deadline_seconds`, `03` §5). S2 only. */
+  readonly deadlineSeconds?: number
   /** Fixed notional per intent, quote currency (`00_globals.md` §4); sized to a qty in the runtime (`00_globals.md` §4). */
   readonly amountUsd: number
   /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */

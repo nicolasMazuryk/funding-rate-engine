@@ -15,6 +15,7 @@
 
 import type { EffectiveConfig } from './config/effective-config.js'
 import { createFundingFeeEventHandler } from './core/intent/exit-policies/funding-fee-event.js'
+import { createRetracementHandler } from './core/intent/exit-policies/retracement.js'
 import { TIMED_HANDLER } from './core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry } from './core/intent/exit-policy.js'
 import type { Clock } from './core/ports/clock.js'
@@ -24,6 +25,7 @@ import type { FundingIncomePoll } from './core/runtime/funding-gate.js'
 import { createStrategyRegistry, type RuntimeStrategyConfig } from './core/strategies/registry.js'
 import { createStrategy1 } from './core/strategies/strategy-1.js'
 import { createStrategy1Ws } from './core/strategies/strategy-1-ws.js'
+import { createStrategy2 } from './core/strategies/strategy-2.js'
 
 /** Read a numeric strategy param or fail loud — a missing/non-numeric key is a config bug. */
 function numberParam(params: Readonly<Record<string, number | string>>, key: string): number {
@@ -50,20 +52,32 @@ export function runtimeConfigFromEffective(cfg: EffectiveConfig): RuntimeStrateg
   // The exit offset (S1's `timed`) and the funding-fee timeout (S1-WS's gate) are read
   // conditionally: each strategy's YAML carries only its own, so reading the absent one
   // unconditionally would throw. S1-WS has no `exit_offset_seconds`; S1 no `funding_fee_timeout_seconds`.
-  const isFundingFeeEvent = cfg.strategy === 's1-ws'
-  return {
+  const base = {
     id: cfg.strategy,
     thresholdPercent: numberParam(params, 'negativeFundingThresholdPercent'),
-    direction: 'negative',
+    direction: 'negative' as const,
     entryOffsetSeconds: numberParam(params, 'entryOffsetSeconds'),
-    ...(isFundingFeeEvent
-      ? { fundingFeeTimeoutSeconds: numberParam(params, 'fundingFeeTimeoutSeconds') }
-      : { exitOffsetSeconds: numberParam(params, 'exitOffsetSeconds') }),
     amountUsd: sizingField(cfg.sizing, 'amountUsd'),
     leverage: sizingField(cfg.sizing, 'leverage'),
     costFees: { takerFeePct: cfg.exchangeProfile.takerFeePct, makerFeePct: cfg.exchangeProfile.makerFeePct },
     costParams: params,
   }
+  // Each strategy's YAML carries only its own exit params, so read them by `cfg.strategy`
+  // (reading an absent key would throw): S2 has the funding-fee timeout + trailing/SL/deadline
+  // params, S1-WS just the timeout, S1 the `timed` exit offset.
+  if (cfg.strategy === 's2') {
+    return {
+      ...base,
+      fundingFeeTimeoutSeconds: numberParam(params, 'fundingFeeTimeoutSeconds'),
+      retracementPct: numberParam(params, 'retracementPct'),
+      slMultiplier: numberParam(params, 'slMultiplier'),
+      deadlineSeconds: numberParam(params, 'deadlineSeconds'),
+    }
+  }
+  if (cfg.strategy === 's1-ws') {
+    return { ...base, fundingFeeTimeoutSeconds: numberParam(params, 'fundingFeeTimeoutSeconds') }
+  }
+  return { ...base, exitOffsetSeconds: numberParam(params, 'exitOffsetSeconds') }
 }
 
 /** The engine deps a caller supplies; the S1 registry + exit-policy registry are wired here. */
@@ -94,5 +108,19 @@ export function wireS1WsEngine(deps: S1EngineDeps, gate: S1WsGateDeps): Engine {
     ...deps,
     registry: createStrategyRegistry([createStrategy1Ws()]),
     exitPolicyRegistry: createExitPolicyRegistry([createFundingFeeEventHandler(gate)]),
+  })
+}
+
+/**
+ * Wire the engine with the S2 strategy module and the `sl_tp_deadline_retracement_funding_event`
+ * handler (task 0310). The handler owns a funding gate (built from the injected clock + REST
+ * poll) whose close arms the retracement tracker, and places its resting SL/TP legs through the
+ * engine's exit-policy order-command seam. `gate` reuses the S1-WS shape (clock + funding-income poll).
+ */
+export function wireS2Engine(deps: S1EngineDeps, gate: S1WsGateDeps): Engine {
+  return createEngine({
+    ...deps,
+    registry: createStrategyRegistry([createStrategy2()]),
+    exitPolicyRegistry: createExitPolicyRegistry([createRetracementHandler(gate)]),
   })
 }

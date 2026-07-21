@@ -23,6 +23,7 @@ import { createSimExchange, type SimExchange } from '../adapters/sim/sim-exchang
 import { computeConfigRevisionHash } from '../config/revision-hash.js'
 import { createEventBus } from '../core/events/bus.js'
 import { createFundingFeeEventHandler } from '../core/intent/exit-policies/funding-fee-event.js'
+import { createRetracementHandler } from '../core/intent/exit-policies/retracement.js'
 import { TIMED_HANDLER } from '../core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry, type ExitPolicyRegistry } from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
@@ -40,6 +41,7 @@ import {
 } from '../core/strategies/registry.js'
 import { createStrategy1 } from '../core/strategies/strategy-1.js'
 import { createStrategy1Ws } from '../core/strategies/strategy-1-ws.js'
+import { createStrategy2 } from '../core/strategies/strategy-2.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -128,6 +130,16 @@ function defaultRegistries(
     })
     return {
       registry: createStrategyRegistry([createStrategy1Ws()]),
+      exitPolicyRegistry: createExitPolicyRegistry([handler]),
+    }
+  }
+  if (strategyConfig.id === 's2') {
+    const handler = createRetracementHandler({
+      clock,
+      fundingIncome: (symbol, range) => exchange.fundingIncome(symbol, range),
+    })
+    return {
+      registry: createStrategyRegistry([createStrategy2()]),
       exitPolicyRegistry: createExitPolicyRegistry([handler]),
     }
   }

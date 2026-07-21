@@ -14,7 +14,8 @@
  * its own handler for its kind — "add a handler", never "edit the engine".
  */
 
-import type { FundingFeeAccrued, MarketTick, Timer } from '../events/types.js'
+import type { FundingFeeAccrued, MarketTick, OrderUpdate, Timer } from '../events/types.js'
+import type { OrderType } from '../ports/exchange-adapter.js'
 import type { RuntimeStrategyConfig } from '../strategies/registry.js'
 import type { ExitReason } from './intent-machine.js'
 
@@ -45,6 +46,27 @@ export interface MonitoredIntent {
   readonly settleTs?: number
   /** Set on crash-recovery re-arm (deadline already known); absent on the live path. */
   readonly deadlineMs?: number
+  /** Venue-confirmed entry fill qty (base units) — the reduce-only cap for handler-placed exit legs (S2). */
+  readonly entryFillQty?: number
+  /** Reference price at entry-decision time (`00_globals.md` §2 R8) — S2's retracement anchor (`03` §2). */
+  readonly anchorPrice?: number
+}
+
+/**
+ * A handler-owned resting reduce-only leg (S2's SL stop / trailing TP limit). The
+ * engine assigns the deterministic `clientOrderId` from `leg`+`attempt`, rounds the
+ * price to the venue tick, and caps the qty to the entry fill — the handler owns only
+ * the strategy semantics (`03` §2/§3).
+ */
+export interface ExitLegRequest {
+  /** Hyphen-free leg code (`sl`/`tp`) for the deterministic client order id (`11` §4). */
+  readonly leg: string
+  /** Attempt counter — a rotating TP increments it per re-place. */
+  readonly attempt: number
+  readonly type: OrderType
+  /** For `stop` this is the trigger (the port has no separate `stopPrice`); for `limit` the limit price. */
+  readonly price?: number
+  readonly qty: number
 }
 
 /** The port subset a handler uses to arm itself and fire out-of-band exits. */
@@ -60,6 +82,21 @@ export interface ExitPolicyContext {
    * guards on `state === 'MONITORING'`, so a duplicate/late call is idempotent (`02` §2).
    */
   requestExit(intentId: string, exitReason: ExitReason): void
+  /**
+   * Place a handler-owned resting reduce-only leg (S2's SL/TP) and return its assigned
+   * `clientOrderId`. The engine builds the id, rounds `price`, caps `qty` to the entry
+   * fill, registers the leg as `exit-policy` in `pendingOrders`, and submits it. The
+   * intent stays `MONITORING` (no state transition — a resting leg is not an exit yet).
+   */
+  placeExitLeg(intentId: string, req: ExitLegRequest): string
+  /** Cancel a handler-owned resting leg by its `clientOrderId` (best-effort; drops it from tracking). */
+  cancelExitLeg(clientOrderId: string): void
+  /**
+   * Close an intent whose SL/TP already filled (position flat) — `MONITORING → EXITING →
+   * CLOSED{exitReason}` in one step (the fill is already in hand), then sweep the sibling
+   * leg and reconcile. Guarded on `state === 'MONITORING'`, so a raced/late call no-ops (`03` §2).
+   */
+  confirmClose(intentId: string, exitReason: ExitReason, filledClientOrderId: string): void
 }
 
 /** A handler's decision to fire the exit: the reason the engine records on `→ CLOSED`. */
@@ -83,6 +120,17 @@ export interface ExitPolicyHandler {
     config: RuntimeStrategyConfig,
     ctx: ExitPolicyContext,
   ): ExitDecision | undefined
+  /**
+   * React to an update on a handler-owned resting leg (`pendingOrders.leg === 'exit-policy'`,
+   * S2's SL/TP). A leg fill drives the OCO close via `ctx.confirmClose`. Absent ⇒ the kind
+   * owns no resting legs (S1/S1-WS), so the engine never routes here.
+   */
+  onOrderUpdate?(
+    event: OrderUpdate,
+    intent: MonitoredIntent,
+    config: RuntimeStrategyConfig,
+    ctx: ExitPolicyContext,
+  ): void
   /** Release any handler-owned resources (timers/gates) on engine shutdown. Absent ⇒ nothing to release. */
   dispose?(): void
 }

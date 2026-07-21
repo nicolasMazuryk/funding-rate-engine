@@ -46,6 +46,9 @@ function recordingCtx(): { ctx: ExitPolicyContext; scheduled: Array<[string, num
       scheduleDeadline: (intentId, atMs) => scheduled.push([intentId, atMs]),
       now: () => 0,
       requestExit: () => {},
+      placeExitLeg: () => '',
+      cancelExitLeg: () => {},
+      confirmClose: () => {},
     },
   }
 }
