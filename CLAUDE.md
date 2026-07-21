@@ -35,7 +35,8 @@ Overall goal and build order: `docs/specs/0000_agentic-development-environment.m
 | `npm run test` | `vitest run` |
 | `npm run test:integration` | `vitest run --config vitest.integration.config.ts` (needs Docker Postgres; not part of `verify`) |
 | `npm run replay -- <trace> [--expect <golden>] [--json]` | replay a recorded trace through the core, no live venue needed (task 0170) |
-| `npm start` | `node src/main.ts` (composition root) |
+| `npm start` | boot an instance (composition root `src/main.ts`); fail-loud startup (`09` §5), clean SIGTERM shutdown |
+| `ADAPTER=sim npm start` | dev smoke (task 0280): boot against the credential-free sim venue, no live orders — used to verify boot + SIGTERM without creds. `ADAPTER` defaults to `binance` |
 
 Do not reference commands that do not exist yet; add each command in the task that creates its tooling.
 

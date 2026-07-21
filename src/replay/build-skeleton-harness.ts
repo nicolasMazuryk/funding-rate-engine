@@ -22,11 +22,8 @@ import { createVirtualClock, type VirtualClock } from '../adapters/clock/virtual
 import { createSimExchange, type SimExchange } from '../adapters/sim/sim-exchange.js'
 import { computeConfigRevisionHash } from '../config/revision-hash.js'
 import { createEventBus } from '../core/events/bus.js'
-import {
-  createExitPolicyRegistry,
-  type ExitPolicyRegistry,
-  TIMED_PLACEHOLDER_HANDLER,
-} from '../core/intent/exit-policy.js'
+import { TIMED_HANDLER } from '../core/intent/exit-policies/timed.js'
+import { createExitPolicyRegistry, type ExitPolicyRegistry } from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
 import type { Balance } from '../core/ports/exchange-adapter.js'
 import type { Repo } from '../core/ports/repo.js'
@@ -39,7 +36,7 @@ import {
   type RuntimeStrategyConfig,
   type StrategyRegistry,
 } from '../core/strategies/registry.js'
-import { createStubStrategy, type StubStrategyConfig } from '../core/strategies/stub.js'
+import { createStrategy1 } from '../core/strategies/strategy-1.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -47,28 +44,25 @@ import { createInMemoryRepo } from './in-memory-repo.js'
 import { createLogger } from './logger.js'
 import { createTraceFile, type TraceFile } from './trace-file.js'
 
-/** Fixed stub-strategy build config for the skeleton (the module's own id/threshold/etc). */
-export const DEFAULT_STUB_CONFIG: StubStrategyConfig = {
-  id: 's1',
-  negativeFundingThresholdPercent: -0.3,
-  entryOffsetSeconds: 90,
-  holdMs: 300_000,
-  entryQty: 0.01,
-}
-
 /**
- * The engine-facing runtime config, derived from {@link DEFAULT_STUB_CONFIG}.
- * `amountUsd: 50` / `leverage: 1` sit comfortably under the 100-notional default
- * limit, leaving headroom for a stricter-limit test.
+ * The engine-facing runtime config for the skeleton test suites, driving the real
+ * S1 module + `timed` handler. Values are chosen for the shared scenario
+ * (`test/helpers/skeleton-scenario.ts`), not production:
+ * - `thresholdPercent -0.3` — BTC's scripted `-0.35` selects, ETH's `+0.01` does not.
+ * - `entryOffsetSeconds 90` — entry timer at `T_settle − 90 s`.
+ * - `exitOffsetSeconds 210` — `timed` deadline at `T_settle + 210 s`; with the scenario's
+ *   `T_settle` at 08:00 this reproduces the old `entry(+90 s before) + 300 s hold` instant,
+ *   keeping the deadline timeline stable across the skeleton→S1 switch.
+ * - `amountUsd 60` / `leverage 1` — sizes BTC (price 60 000, lot 0.001) to qty `0.001`,
+ *   stays under the 100-notional default risk limit, and needs 60 free margin.
  */
 export const DEFAULT_RUNTIME_CONFIG: RuntimeStrategyConfig = {
-  id: DEFAULT_STUB_CONFIG.id,
-  thresholdPercent: DEFAULT_STUB_CONFIG.negativeFundingThresholdPercent,
+  id: 's1',
+  thresholdPercent: -0.3,
   direction: 'negative',
-  entryOffsetSeconds: DEFAULT_STUB_CONFIG.entryOffsetSeconds,
-  holdMs: DEFAULT_STUB_CONFIG.holdMs,
-  entryQty: DEFAULT_STUB_CONFIG.entryQty,
-  amountUsd: 50,
+  entryOffsetSeconds: 90,
+  exitOffsetSeconds: 210,
+  amountUsd: 60,
   leverage: 1,
 }
 
@@ -118,8 +112,8 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
   const exchange = opts.exchange ?? createSimExchange(clock, bus)
   const rawWal = createWalFile({ path: opts.walPath })
   const repo = opts.repo ?? createInMemoryRepo()
-  const registry = opts.registry ?? createStrategyRegistry([createStubStrategy(DEFAULT_STUB_CONFIG)])
-  const exitPolicyRegistry = opts.exitPolicyRegistry ?? createExitPolicyRegistry([TIMED_PLACEHOLDER_HANDLER])
+  const registry = opts.registry ?? createStrategyRegistry([createStrategy1()])
+  const exitPolicyRegistry = opts.exitPolicyRegistry ?? createExitPolicyRegistry([TIMED_HANDLER])
   const strategyConfig = opts.strategyConfig ?? DEFAULT_RUNTIME_CONFIG
   const logger = opts.logger ?? createLogger({ instance: 'skeleton' })
   const scheduler = opts.scheduler ?? createScheduler(clock, bus)

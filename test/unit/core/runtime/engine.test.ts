@@ -53,16 +53,19 @@ describe('engine — happy path', () => {
     expect(snapshot?.state).toBe('CLOSED')
     expect(snapshot?.exitReason).toBe('timed')
 
-    // Reconciliation stub ran and matched engine fill vs venue.
+    // Reconciliation stub ran and matched engine fill vs venue. Real sizing:
+    // amountUsd 60 / BTC price 60 000 / lot 0.001 → qty 0.001.
     expect(reconciliations).toEqual([
       {
         intentId,
         symbol: BTC.symbol,
-        engineQty: h.strategyConfig.entryQty,
-        venueQty: h.strategyConfig.entryQty,
+        engineQty: 0.001,
+        venueQty: 0.001,
         match: true,
       },
     ])
+    // Position accrued funding: the entry filled before T_settle (`00_globals.md` §3.1).
+    expect(h.engine.fundingReceived(intentId)).toBe(true)
   })
 
   it('writes exactly the four transition records to the WAL, in order', () => {
@@ -126,7 +129,7 @@ describe('engine — preflight reject', () => {
   })
 
   it('aborts with insufficient_balance when free balance is below required margin', () => {
-    // amountUsd 50 / leverage 1 needs 50; only 10 free.
+    // amountUsd 60 / leverage 1 needs 60; only 10 free.
     const h = build({ walPath, initialBalance: { asset: 'USDT', free: 10, used: 0 } })
     runSkeletonScenario(h)
     const intentId = INTENT_ID
@@ -142,12 +145,12 @@ describe('engine — preflight reject', () => {
 })
 
 describe('engine — preflight skip', () => {
-  it('leaves no intent row when the order is below min notional', () => {
+  it('leaves no intent row when the sized order is infeasible', () => {
     const repo = createInMemoryRepo()
     const h = build({ walPath, repo })
     const { clock, exchange, scheduler } = h
-    // BTC minNotional is 5; qty 0.01 × price 100 = 1 < 5 → infeasible → skip.
-    exchange.setPrice(BTC.symbol, 100)
+    // amountUsd 60 / price 100 000 → rawQty 0.0006 < lot 0.001 → floors to 0 → zero_qty → skip.
+    exchange.setPrice(BTC.symbol, 100_000)
     exchange.setPrice(ETH.symbol, ETH.price)
     exchange.setPredictedFunding(BTC.symbol, BTC.predicted, SCAN_TS)
     exchange.setPredictedFunding(ETH.symbol, ETH.predicted, SCAN_TS)

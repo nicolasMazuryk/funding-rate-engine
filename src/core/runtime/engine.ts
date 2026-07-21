@@ -46,6 +46,7 @@ import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-ad
 import type { Repo } from '../ports/repo.js'
 import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
+import { computeQty } from '../sizing/sizing.js'
 import type { RuntimeStrategyConfig, StrategyModule, StrategyRegistry } from '../strategies/registry.js'
 import { evaluateProfitCondition, type ProfitBreakdown } from './cost-model.js'
 import { type FindCandidatesInput, findCandidates } from './finder.js'
@@ -70,7 +71,7 @@ export interface EngineDeps {
   readonly registry: StrategyRegistry
   /** Exit-policy dispatch table (`12` §5) — the engine resolves the active module's `exitPolicyKind` handler. */
   readonly exitPolicyRegistry: ExitPolicyRegistry
-  /** Engine-level runtime config for the active strategy (threshold, direction, offset, hold, qty). */
+  /** Engine-level runtime config for the active strategy (threshold, direction, entry/exit offsets, sizing). */
   readonly strategyConfig: RuntimeStrategyConfig
   /** Risk gate evaluated in preflight (`13` §1). Defaults to always-allow. */
   readonly riskGate?: RiskGate
@@ -90,9 +91,10 @@ export interface EngineDeps {
 }
 
 /**
- * The five optional WAL fields carried on an intent's transitions — the exact
- * set crash recovery reads back to rebuild the deterministic order id, entry
- * side/qty/fill, and deadline instant from the WAL alone.
+ * The optional WAL fields carried on an intent's transitions — the exact set
+ * crash recovery reads back to rebuild the deterministic order id, entry
+ * side/qty/fill, deadline + settlement instants, and the funding-accrual verdict
+ * from the WAL alone.
  */
 export interface IntentWalFields {
   readonly clientOrderId?: string
@@ -100,6 +102,10 @@ export interface IntentWalFields {
   readonly entryQty?: number
   readonly entryFillPx?: number
   readonly tDeadlineMs?: number
+  /** Settlement instant the intent entered against, epoch ms — the `timed` exit's anchor (`01` §3). */
+  readonly tSettleMs?: number
+  /** Funding-accrual verdict (`00_globals.md` §3.1): entry fill landed before `T_settle`, so the position accrues. */
+  readonly fundingReceived?: boolean
 }
 
 /**
@@ -136,6 +142,8 @@ export interface Engine {
   intentState(intentId: string): IntentState | undefined
   /** Advisory cost-model breakdown captured at selection (task 0150), or `undefined` if none. */
   costBreakdown(intentId: string): ProfitBreakdown | undefined
+  /** Funding-accrual verdict (`00_globals.md` §3.1) for an intent, or `undefined` if unknown/not yet monitoring. */
+  fundingReceived(intentId: string): boolean | undefined
   /** Unsubscribe from the bus (simulated crash: engine stops reacting). */
   dispose(): void
 }
@@ -153,6 +161,10 @@ interface IntentRecord {
   entryFillQty?: number
   /** Instant the entry filled (MONITORING entry), epoch ms — the exit policy's `enteredAtMs`. */
   enteredAtMs?: number
+  /** Settlement instant this intent entered against, epoch ms — the `timed` exit's anchor (`01` §3). */
+  settleTs?: number
+  /** Funding-accrual verdict (`00_globals.md` §3.1): entry fill landed before `T_settle`. Set on `→ MONITORING`. */
+  fundingReceived?: boolean
   deadlineMs?: number
   /** Exit reason the exit-policy handler commanded (stashed on `→ EXITING`, recorded on `→ CLOSED`). */
   exitReason?: ExitReason
@@ -189,6 +201,8 @@ export function recoveredFromWal(records: readonly TransitionLogEntry[]): readon
       entryQty: payload.entryQty,
       entryFillPx: payload.entryFillPx,
       tDeadlineMs: payload.tDeadlineMs,
+      tSettleMs: payload.tSettleMs,
+      fundingReceived: payload.fundingReceived,
     })
   }
   return recovered
@@ -238,6 +252,9 @@ export function createEngine(deps: EngineDeps): Engine {
   const intents = new Map<string, IntentRecord>()
   const pendingOrders = new Map<string, PendingOrder>()
   const predicted = new Map<string, FundingPredicted>()
+  // Settlement instant per symbol, stashed at selection (`onScan`) and read at entry
+  // (`onEntry`) — the `timed` exit's anchor, mirroring the `predicted`/`costBySymbol` maps.
+  const settleBySymbol = new Map<string, number>()
   // Advisory cost-model breakdown per symbol, stashed at selection, copied onto the intent at entry (task 0150).
   const costBySymbol = new Map<string, ProfitBreakdown>()
   // Latest venue state the preflight reads, updated from the event stream.
@@ -328,13 +345,16 @@ export function createEngine(deps: EngineDeps): Engine {
           }),
         )
       }
+      // Stash the settlement instant for `onEntry` to thread into the intent (the
+      // `timed` exit anchors on it, not fill time — `01` §3).
+      settleBySymbol.set(trigger.symbol, trigger.settleTs)
       // Entry timer fires `entryOffsetSeconds` before settlement (`00_globals.md` §7).
       scheduler.scheduleEntryTimer(trigger.symbol, trigger.settleTs - strategyConfig.entryOffsetSeconds * 1000)
     }
   }
 
-  /** Build the preflight snapshot for `symbol` from the engine's current venue view. */
-  function preflightSnapshot(symbol: string): PreflightSnapshot {
+  /** Build the preflight snapshot for `symbol` from the engine's current venue view, sized to `qty`. */
+  function preflightSnapshot(symbol: string, qty: number): PreflightSnapshot {
     const market = exchange.markets().find((m) => m.normalized === symbol)
     return {
       killSwitch: killSwitch.state(),
@@ -343,7 +363,7 @@ export function createEngine(deps: EngineDeps): Engine {
       amountUsd: strategyConfig.amountUsd,
       leverage: strategyConfig.leverage,
       balance: latestBalance,
-      qty: strategyConfig.entryQty,
+      qty,
       price: latestPrice.get(symbol),
       instrument: exchange.normalize(symbol),
       accountSetupComplete: accountSetupReady(symbol),
@@ -356,11 +376,23 @@ export function createEngine(deps: EngineDeps): Engine {
     if (symbol === undefined) return
     const intentId = `${symbol}-${event.ts}`
 
+    // Real sizing (`00_globals.md` §4): `amountUsd / price → qty`, lot-floored. An unknown
+    // price yields qty 0, which preflight skips (fail-closed) — same verdict as an
+    // infeasible size; there is no `error_code` for min-notional, so both leave no trace.
+    const price = latestPrice.get(symbol)
+    const qty = price === undefined ? 0 : computeQty(strategyConfig.amountUsd, price, exchange.normalize(symbol))
+
     // Preflight before creating the intent row: `skip` leaves no trace (`12` §3 / `13` §6).
-    const result = runPreflight(preflightSnapshot(symbol), riskGate, symbol)
+    const result = runPreflight(preflightSnapshot(symbol, qty), riskGate, symbol)
     if (result.kind === 'skip') return
 
-    const rec: IntentRecord = { symbol, state: 'SELECTED', entrySide: ENTRY_SIDE, entryQty: strategyConfig.entryQty }
+    const rec: IntentRecord = {
+      symbol,
+      state: 'SELECTED',
+      entrySide: ENTRY_SIDE,
+      entryQty: qty,
+      settleTs: settleBySymbol.get(symbol),
+    }
     const stashedCost = costBySymbol.get(symbol)
     if (stashedCost !== undefined) rec.costBreakdown = stashedCost
     intents.set(intentId, rec)
@@ -377,7 +409,9 @@ export function createEngine(deps: EngineDeps): Engine {
       from: 'SELECTED',
       to: 'SUBMITTING_ENTRY',
       payload: {},
-      extras: { clientOrderId, entrySide: rec.entrySide, entryQty: rec.entryQty },
+      // `tSettleMs` rides from here on so a crash before the fill still recovers the
+      // settlement anchor the `timed` exit arms against (SUBMITTING_ENTRY → re-submit → fill).
+      extras: { clientOrderId, entrySide: rec.entrySide, entryQty: rec.entryQty, tSettleMs: rec.settleTs },
     })
     pendingOrders.set(clientOrderId, { intentId, leg: 'entry' })
     void exchange.placeOrder({ symbol, side: rec.entrySide, type: 'market', qty: rec.entryQty, clientOrderId })
@@ -392,6 +426,7 @@ export function createEngine(deps: EngineDeps): Engine {
       entryQty: rec.entryQty,
       entryFillPx: rec.entryFillPx,
       enteredAtMs: rec.enteredAtMs ?? clock.now(),
+      settleTs: rec.settleTs,
       deadlineMs: rec.deadlineMs,
     }
   }
@@ -452,8 +487,13 @@ export function createEngine(deps: EngineDeps): Engine {
     rec.entryFillPx = fillPx
     rec.entryFillQty = fillQty
     // On the live path `deadlineMs` is undefined here → the handler derives it from
-    // `enteredAtMs + holdMs`; on crash-recovery re-arm it is the recovered instant.
+    // `settleTs + exitOffsetSeconds`; on crash-recovery re-arm it is the recovered instant.
     rec.enteredAtMs = rec.enteredAtMs ?? clock.now()
+    // Funding-accrual verdict (`00_globals.md` §3.1): the position accrues iff the entry
+    // filled before settlement. Recorded in the WAL payload (not yet an `intents` column;
+    // that + a trades table are 0360/0390) so scenarios/e2e assert it from the WAL.
+    const fundingReceived = rec.settleTs === undefined ? undefined : rec.enteredAtMs < rec.settleTs
+    rec.fundingReceived = fundingReceived
     const deadlineMs = exitHandler.arm(toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
     rec.deadlineMs = deadlineMs
     commit({
@@ -462,7 +502,14 @@ export function createEngine(deps: EngineDeps): Engine {
       from: 'SUBMITTING_ENTRY',
       to: 'MONITORING',
       payload: {},
-      extras: { entrySide: rec.entrySide, entryQty: rec.entryQty, entryFillPx: fillPx, tDeadlineMs: deadlineMs },
+      extras: {
+        entrySide: rec.entrySide,
+        entryQty: rec.entryQty,
+        entryFillPx: fillPx,
+        tDeadlineMs: deadlineMs,
+        tSettleMs: rec.settleTs,
+        fundingReceived,
+      },
     })
   }
 
@@ -487,7 +534,28 @@ export function createEngine(deps: EngineDeps): Engine {
     const exitReason = rec.exitReason
     if (exitReason === undefined) throw new Error(`Engine: exit fill for '${intentId}' has no recorded exit reason`)
     commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason } })
+    // Post-exit reduce-only sweep (`00_globals.md` §5.2, `01` §2 step 5): cancel any
+    // reduce-only orders the engine still tracks open for this symbol. No-op on S1's
+    // happy path (the market exit already filled and cleared `pendingOrders`); it exists
+    // and runs so the resting-order strategies (0310+) inherit the seam.
+    sweepReduceOnlyOrders(intentId, rec.symbol)
     void finishReconciliation(intentId)
+  }
+
+  /**
+   * Cancel reduce-only (exit-leg) orders the engine still tracks open for `symbol`.
+   * Engine-tracked only: a venue-side sweep needs a `getOpenOrders` port the adapter
+   * interface lacks (logged as a SUGGESTION); full stale-sweep-before-entry is 0380.
+   */
+  function sweepReduceOnlyOrders(intentId: string, symbol: string): void {
+    for (const [clientOrderId, pending] of [...pendingOrders]) {
+      if (pending.leg !== 'exit') continue
+      if (intents.get(pending.intentId)?.symbol !== symbol) continue
+      pendingOrders.delete(clientOrderId)
+      // Best-effort: a since-filled/unknown order throws — swallow it, the intent is CLOSED.
+      void exchange.cancelOrder(clientOrderId).catch(() => {})
+    }
+    void intentId // referenced for symmetry with the persisted intent scope; no per-intent state to clear.
   }
 
   function onOrderUpdate(event: OrderUpdate): void {
@@ -554,7 +622,8 @@ export function createEngine(deps: EngineDeps): Engine {
       symbol: r.symbol,
       state: 'SUBMITTING_ENTRY',
       entrySide: r.entrySide ?? ENTRY_SIDE,
-      entryQty: r.entryQty ?? strategyConfig.entryQty,
+      entryQty: r.entryQty ?? 0,
+      settleTs: r.tSettleMs,
     }
     intents.set(r.intentId, rec)
     const clientOrderId = r.clientOrderId ?? makeClientOrderId({ intentId: r.intentId, leg: 'entry', attempt: 1 })
@@ -585,8 +654,10 @@ export function createEngine(deps: EngineDeps): Engine {
       symbol: r.symbol,
       state: 'MONITORING',
       entrySide: r.entrySide ?? ENTRY_SIDE,
-      entryQty: r.entryQty ?? strategyConfig.entryQty,
+      entryQty: r.entryQty ?? 0,
       entryFillPx: r.entryFillPx,
+      settleTs: r.tSettleMs,
+      fundingReceived: r.fundingReceived,
       deadlineMs: r.tDeadlineMs,
     }
     intents.set(r.intentId, rec)
@@ -612,6 +683,9 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     costBreakdown(intentId: string): ProfitBreakdown | undefined {
       return intents.get(intentId)?.costBreakdown
+    },
+    fundingReceived(intentId: string): boolean | undefined {
+      return intents.get(intentId)?.fundingReceived
     },
     dispose(): void {
       unsubscribe()

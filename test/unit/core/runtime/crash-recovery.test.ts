@@ -68,7 +68,7 @@ describe('crash recovery — Scenario A: after SUBMITTING_ENTRY WAL append, befo
 
     // Exactly one position at the expected qty — the re-submit did not duplicate.
     const positions = await sim.getPositions()
-    expect(positions).toEqual([{ symbol: BTC.symbol, side: 'long', qty: 0.01, entryPrice: BTC.price }])
+    expect(positions).toEqual([{ symbol: BTC.symbol, side: 'long', qty: 0.001, entryPrice: BTC.price }])
 
     clock.advanceTo(DEADLINE_TS)
     expect(engineB.engine.intentState(INTENT_ID)).toBe('CLOSED')

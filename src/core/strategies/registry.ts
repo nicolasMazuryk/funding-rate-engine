@@ -31,11 +31,9 @@ export interface RuntimeStrategyConfig {
   readonly direction: 'negative' | 'positive'
   /** Delay before `T_settle` at which the entry timer fires, seconds (`entry_offset_seconds`). */
   readonly entryOffsetSeconds: number
-  /** Hold duration from fill to the `timed` deadline exit, epoch-ms duration. */
-  readonly holdMs: number
-  /** Fixed order quantity, base units (bypasses 0120 sizing in the skeleton). */
-  readonly entryQty: number
-  /** Fixed notional per intent, quote currency (`00_globals.md` §4); preflight risk/balance input (real 0120 sizing wiring is 0280). */
+  /** Delay after `T_settle` at which the `timed` exit fires, seconds (`exit_offset_seconds`, S1). */
+  readonly exitOffsetSeconds: number
+  /** Fixed notional per intent, quote currency (`00_globals.md` §4); sized to a qty in the runtime (`00_globals.md` §4). */
   readonly amountUsd: number
   /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */
   readonly leverage: number

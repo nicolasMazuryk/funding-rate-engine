@@ -7,7 +7,7 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node src/main.ts",
+    "start": "node --experimental-transform-types --import ./scripts/register-ts.mjs src/main.ts",
     "replay": "node --experimental-transform-types --import ./scripts/register-ts.mjs scripts/replay.ts",
     "capture": "node --experimental-transform-types --import ./scripts/register-ts.mjs scripts/capture.ts",
     "typecheck": "tsc --noEmit",

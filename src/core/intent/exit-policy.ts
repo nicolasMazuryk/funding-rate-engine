@@ -9,9 +9,9 @@
  * pattern the strategy modules use (`08` §5).
  *
  * This file owns the exit-policy vocabulary (single source of truth): `registry.ts`
- * re-exports {@link ExitPolicyKind} from here. Only `timed` is wired in the skeleton
- * ({@link TIMED_PLACEHOLDER_HANDLER}); each strategy task (0280+) brings its own
- * handler for its kind — "add a handler", never "edit the engine".
+ * re-exports {@link ExitPolicyKind} from here. Only `timed` is wired so far (the real
+ * `TIMED_HANDLER` in `exit-policies/timed.ts`, S1); each strategy task (0300+) brings
+ * its own handler for its kind — "add a handler", never "edit the engine".
  */
 
 import type { FundingFeeAccrued, MarketTick, Timer } from '../events/types.js'
@@ -41,6 +41,8 @@ export interface MonitoredIntent {
   readonly entryQty: number
   readonly entryFillPx?: number
   readonly enteredAtMs: number
+  /** Settlement instant the intent entered against, epoch ms — the `timed` exit keys off this (`01` §3), not fill time. */
+  readonly settleTs?: number
   /** Set on crash-recovery re-arm (deadline already known); absent on the live path. */
   readonly deadlineMs?: number
 }
@@ -86,25 +88,4 @@ export function createExitPolicyRegistry(handlers: readonly ExitPolicyHandler[])
     registry.set(handler.kind, handler)
   }
   return registry
-}
-
-/**
- * The refactored skeleton exit — the engine's old inline `timed` deadline, now a
- * handler. **Placeholder**: S1 (0280) replaces it with the real `timed` kind. It
- * arms a deadline at `enteredAtMs + holdMs` (or the recovered `deadlineMs`) and
- * fires `{ exitReason: 'timed' }` when that deadline Timer arrives.
- */
-export const TIMED_PLACEHOLDER_HANDLER: ExitPolicyHandler = {
-  kind: 'timed',
-  arm(intent, config, ctx): number {
-    const deadlineMs = intent.deadlineMs ?? intent.enteredAtMs + config.holdMs
-    ctx.scheduleDeadline(intent.intentId, deadlineMs)
-    return deadlineMs
-  },
-  onEvent(event, intent): ExitDecision | undefined {
-    if (event.type === 'Timer' && event.kind === 'deadline' && event.intentId === intent.intentId) {
-      return { exitReason: 'timed' }
-    }
-    return undefined
-  },
 }
