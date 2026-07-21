@@ -31,8 +31,10 @@ export interface RuntimeStrategyConfig {
   readonly direction: 'negative' | 'positive'
   /** Delay before `T_settle` at which the entry timer fires, seconds (`entry_offset_seconds`). */
   readonly entryOffsetSeconds: number
-  /** Delay after `T_settle` at which the `timed` exit fires, seconds (`exit_offset_seconds`, S1). */
-  readonly exitOffsetSeconds: number
+  /** Delay after `T_settle` at which the `timed` exit fires, seconds (`exit_offset_seconds`, S1). Absent for the WS-gated strategies (S1-WS/S2/S6). */
+  readonly exitOffsetSeconds?: number
+  /** Gate timeout past `T_settle`, seconds (`funding_fee_timeout_seconds`, `02` §5). Present for the `funding_fee_event` policy. */
+  readonly fundingFeeTimeoutSeconds?: number
   /** Fixed notional per intent, quote currency (`00_globals.md` §4); sized to a qty in the runtime (`00_globals.md` §4). */
   readonly amountUsd: number
   /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */

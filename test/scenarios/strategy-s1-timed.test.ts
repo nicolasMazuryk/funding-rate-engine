@@ -82,7 +82,7 @@ describe('scenario: strategy S1 timed exit', () => {
     expect(exit?.req.reduceOnly).toBe(true)
     expect(exit?.req.side).toBe('short')
     expect(exit?.ts).toBe(DEADLINE_TS)
-    expect(DEADLINE_TS).toBe(SETTLE_TS + h.strategyConfig.exitOffsetSeconds * 1000)
+    expect(DEADLINE_TS).toBe(SETTLE_TS + (h.strategyConfig.exitOffsetSeconds ?? 0) * 1000)
 
     // Closed with exit_reason = timed; position accrued funding (entry filled pre-settlement).
     expect(h.engine.intentState(INTENT_ID)).toBe('CLOSED')

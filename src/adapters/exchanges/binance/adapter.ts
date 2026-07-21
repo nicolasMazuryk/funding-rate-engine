@@ -531,10 +531,11 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
         .map((r) => ({ symbol, rate: toSignedPercent(r.fundingRate), settleTs: r.timestamp as number }))
     },
     fundingIncome(_symbol: string, _range: TimeRange): Promise<FundingIncome[]> {
-      // NotImplemented stub (header convention): the funding gate's REST safety net goes
-      // live in 0300 — real ccxt income read via `callGeneral` (fetch income of type
-      // `FUNDING_FEE`) + testnet verification lands there, when the gate is engine-wired.
-      throw new Error('BinanceAdapter.fundingIncome: not implemented until the funding gate goes live (task 0300)')
+      // NotImplemented stub (header convention). The funding gate is engine-wired in 0300,
+      // but on the credential-free sim; the real ccxt income read (fetch income of type
+      // `FUNDING_FEE`) is DEFERRED past 0300 because it is unverifiable without the
+      // credential-gated testnet tier that 0300's sim-only DoD does not include (SUGGESTIONS).
+      throw new Error('BinanceAdapter.fundingIncome: not implemented (real Binance read deferred past task 0300)')
     },
 
     // ── streams (native WS — 0210 public / 0220 private) ──────────────────────

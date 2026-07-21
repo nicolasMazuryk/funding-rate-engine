@@ -27,8 +27,10 @@ export const SCAN_TS = START_MS + 58 * 60_000
 export const SETTLE_TS = 8 * HOUR_MS
 /** Entry timer instant: `T_settle − entryOffsetSeconds`. */
 export const ENTRY_TS = SETTLE_TS - DEFAULT_RUNTIME_CONFIG.entryOffsetSeconds * 1000
+/** S1's `exit_offset_seconds` — present on the skeleton (timed) config; narrowed off the optional field. */
+const EXIT_OFFSET_SECONDS = DEFAULT_RUNTIME_CONFIG.exitOffsetSeconds ?? 0
 /** Deadline instant: the real `timed` exit fires at `T_settle + exitOffsetSeconds` (`01` §3), not fill time. */
-export const DEADLINE_TS = SETTLE_TS + DEFAULT_RUNTIME_CONFIG.exitOffsetSeconds * 1000
+export const DEADLINE_TS = SETTLE_TS + EXIT_OFFSET_SECONDS * 1000
 
 export const BTC = { symbol: 'BTC', price: 60_000, predicted: -0.35 } as const
 export const ETH = { symbol: 'ETH', price: 3_000, predicted: 0.01 } as const

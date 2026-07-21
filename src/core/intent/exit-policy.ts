@@ -47,12 +47,19 @@ export interface MonitoredIntent {
   readonly deadlineMs?: number
 }
 
-/** The port subset a handler uses to arm itself — scheduler + clock, nothing else. */
+/** The port subset a handler uses to arm itself and fire out-of-band exits. */
 export interface ExitPolicyContext {
   /** Schedule the deadline timer for `intentId` at `atMs` (→ `scheduler.scheduleDeadlineTimer`). */
   scheduleDeadline(intentId: string, atMs: number): void
   /** Current instant, epoch ms (→ `clock.now`). */
   now(): number
+  /**
+   * Fire the reduce-only exit for `intentId` **out of band** — the seam a gated policy
+   * (`funding_fee_event`, S1-WS/S2/S6) needs, whose signals resolve on an async poll or a
+   * gate-owned timer *outside* the engine's synchronous `onEvent` dispatch. The engine
+   * guards on `state === 'MONITORING'`, so a duplicate/late call is idempotent (`02` §2).
+   */
+  requestExit(intentId: string, exitReason: ExitReason): void
 }
 
 /** A handler's decision to fire the exit: the reason the engine records on `→ CLOSED`. */
@@ -76,6 +83,8 @@ export interface ExitPolicyHandler {
     config: RuntimeStrategyConfig,
     ctx: ExitPolicyContext,
   ): ExitDecision | undefined
+  /** Release any handler-owned resources (timers/gates) on engine shutdown. Absent ⇒ nothing to release. */
+  dispose?(): void
 }
 
 export type ExitPolicyRegistry = ReadonlyMap<ExitPolicyKind, ExitPolicyHandler>

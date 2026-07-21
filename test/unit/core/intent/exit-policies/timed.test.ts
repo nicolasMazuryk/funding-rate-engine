@@ -12,12 +12,13 @@ import { TIMED_HANDLER } from '../../../../../src/core/intent/exit-policies/time
 import type { ExitPolicyContext, MonitoredIntent } from '../../../../../src/core/intent/exit-policy.js'
 import type { RuntimeStrategyConfig } from '../../../../../src/core/strategies/registry.js'
 
+const EXIT_OFFSET_SECONDS = 6
 const CONFIG: RuntimeStrategyConfig = {
   id: 's1',
   thresholdPercent: -0.4,
   direction: 'negative',
   entryOffsetSeconds: 5,
-  exitOffsetSeconds: 6,
+  exitOffsetSeconds: EXIT_OFFSET_SECONDS,
   amountUsd: 20,
   leverage: 4,
 }
@@ -44,6 +45,7 @@ function recordingCtx(): { ctx: ExitPolicyContext; scheduled: Array<[string, num
     ctx: {
       scheduleDeadline: (intentId, atMs) => scheduled.push([intentId, atMs]),
       now: () => 0,
+      requestExit: () => {},
     },
   }
 }
@@ -55,7 +57,7 @@ function deadlineTimer(intentId: string, ts = 0): Timer {
 describe('TIMED_HANDLER', () => {
   it('arms the deadline at T_settle + exitOffsetSeconds (not fill time) and returns it', () => {
     const { ctx, scheduled } = recordingCtx()
-    const expected = SETTLE_TS + CONFIG.exitOffsetSeconds * 1000
+    const expected = SETTLE_TS + EXIT_OFFSET_SECONDS * 1000
 
     const deadlineMs = TIMED_HANDLER.arm(monitored(), CONFIG, ctx)
 

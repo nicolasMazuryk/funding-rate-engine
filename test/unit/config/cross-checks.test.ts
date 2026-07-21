@@ -42,6 +42,20 @@ describe('checkWsMandatoryGuard (09_configuration §6)', () => {
   it('never throws for a non-WS-mandatory strategy (s1)', () => {
     expect(() => checkWsMandatoryGuard('s1', profile(false), false)).not.toThrow()
   })
+
+  it('throws ws_order_adapter_required for s1-ws with no adapter and no fallback (0300 DoD #3)', () => {
+    try {
+      checkWsMandatoryGuard('s1-ws', profile(false), false)
+      throw new Error('expected throw')
+    } catch (e) {
+      expect(e).toBeInstanceOf(ConfigParseError)
+      expect((e as ConfigParseError).code).toBe('ws_order_adapter_required')
+    }
+  })
+
+  it('passes s1-ws with a REST fallback even without an adapter (0300 DoD #3)', () => {
+    expect(() => checkWsMandatoryGuard('s1-ws', profile(false), true)).not.toThrow()
+  })
 })
 
 describe('checkDeadlineVsTimeout (09_configuration §6)', () => {

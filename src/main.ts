@@ -20,7 +20,7 @@ import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
 import { createSimExchange } from './adapters/sim/sim-exchange.js'
-import { runtimeConfigFromEffective, wireS1Engine } from './composition.js'
+import { runtimeConfigFromEffective, type S1EngineDeps, wireS1Engine, wireS1WsEngine } from './composition.js'
 import type { EffectiveConfig } from './config/effective-config.js'
 import { createInstrumentValidationHook } from './config/instrument-validation.js'
 import { loadEffectiveConfig } from './config/load.js'
@@ -85,7 +85,10 @@ async function run(): Promise<void> {
   const riskGate = createRiskGate(riskLimits(cfg.risk))
   const killSwitch = createKillSwitch({ initial: cfg.killSwitch, clock, wal })
   const scheduler = createScheduler(clock, bus)
-  const engine = wireS1Engine({
+  // Select the strategy wiring by `cfg.strategy` (Registry pattern at the composition edge):
+  // `s1` → the `timed` exit; `s1-ws` → the `funding_fee_event` gate. The WS-mandatory guard
+  // already ran in `load.ts` (`checkWsMandatoryGuard`), so s1-ws only reaches here validly.
+  const engineDeps: S1EngineDeps = {
     bus,
     clock,
     scheduler,
@@ -97,7 +100,11 @@ async function run(): Promise<void> {
     killSwitch,
     initialBalance,
     onReconciliation: (record) => logger.info({ reconciliation: record }, 'reconciliation'),
-  })
+  }
+  const engine =
+    cfg.strategy === 's1-ws'
+      ? wireS1WsEngine(engineDeps, { clock, fundingIncome: (symbol, range) => adapter.fundingIncome(symbol, range) })
+      : wireS1Engine(engineDeps)
 
   scheduler.start()
   logger.info('instance running')

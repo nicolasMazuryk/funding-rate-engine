@@ -211,6 +211,56 @@ describe('order manager — WS-timeout REST fallback (`11` §5)', () => {
     expect(restSubmits).toBe(0) // adopted, not resubmitted
     expect(result.accepted).toBe(true)
   })
+
+  it('forces REST fallback for a reduce-only leg even with the fallback flag OFF (`02` §3, task 0300)', async () => {
+    // Protecting an open position outranks the fallback-flag gate: a WS-transport failure
+    // on a reduce-only exit falls back to REST even when wsOrderRestFallback is false.
+    let submits = 0
+    let restSubmits = 0
+    const transport: OrderTransport = {
+      submit: () => {
+        submits++
+        return Promise.reject(new WsTimeoutError())
+      },
+      submitRest: (r) => {
+        restSubmits++
+        return Promise.resolve(ack(r.clientOrderId))
+      },
+      getOrder: () => Promise.reject(new NotFoundError()), // venue never saw it → resubmit via REST
+      cancel: notImpl,
+    }
+    const h = harness(transport, { wsOrderRestFallback: false })
+    const result = await h.manager.placeOrder(req({ clientOrderId: 'BTC-1-exit-1', reduceOnly: true }))
+
+    expect(submits).toBe(1) // no bounded WS retry — went straight to REST
+    expect(restSubmits).toBe(1)
+    expect(result.accepted).toBe(true)
+    expect(h.orderUpdates().some((u) => u.status === 'OPEN')).toBe(true)
+  })
+
+  it('a NON-reduce-only leg with the flag OFF still uses bounded WS retry, not REST (task 0300)', async () => {
+    // The reduce-only override must not leak to entry legs — they keep the bounded-retry policy.
+    let submits = 0
+    let restSubmits = 0
+    const transport: OrderTransport = {
+      submit: () => {
+        submits++
+        return Promise.reject(new WsTimeoutError())
+      },
+      submitRest: () => {
+        restSubmits++
+        return Promise.resolve(ack('x'))
+      },
+      getOrder: notImpl,
+      cancel: notImpl,
+    }
+    const h = harness(transport, { wsOrderRestFallback: false })
+    const result = await h.manager.placeOrder(req({ reduceOnly: false }))
+
+    expect(submits).toBe(3) // initial + MAX_WS_RETRIES(2)
+    expect(restSubmits).toBe(0)
+    expect(result.accepted).toBe(false)
+  })
 })
 
 describe('order manager — WS-timeout without fallback (bounded retry → abort)', () => {

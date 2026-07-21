@@ -21,6 +21,9 @@ function deadlineFromSettle(intent: MonitoredIntent, config: RuntimeStrategyConf
   if (intent.settleTs === undefined) {
     throw new Error(`TIMED_HANDLER: intent '${intent.intentId}' has no settleTs to arm the timed exit against`)
   }
+  if (config.exitOffsetSeconds === undefined) {
+    throw new Error(`TIMED_HANDLER: intent '${intent.intentId}' config has no exitOffsetSeconds for the timed exit`)
+  }
   return intent.settleTs + config.exitOffsetSeconds * 1000
 }
 

@@ -234,7 +234,12 @@ export function createOrderManager(deps: OrderManagerDeps): OrderManager {
   }
 
   async function recoverSubmit(req: OrderRequest, cause: AdapterError): Promise<OrderAck> {
-    if (wsOrderRestFallback) {
+    // Reduce-only (exit-leg) submits force the REST fallback even with the flag off:
+    // protecting an open position outranks the fallback-flag gate (`02` §3). "WS rejection"
+    // here is a WS *transport* failure (timeout/network) — the `isTransportFailure` set
+    // `submitWithPolicy` already filtered on, matching the entry mechanism; a genuine
+    // venue-semantic reject is not REST-recoverable and never reaches this branch.
+    if (wsOrderRestFallback || req.reduceOnly === true) {
       const adopted = await adopt(req.clientOrderId)
       if (adopted) return adopted
       return transport.submitRest(req)

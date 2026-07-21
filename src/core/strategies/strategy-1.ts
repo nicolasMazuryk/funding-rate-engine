@@ -13,6 +13,7 @@
  * engine owns the value; the module encodes only the most-negative-first direction.
  */
 
+import { selectGroupL } from './group-l-selection.js'
 import type { StrategyModule } from './registry.js'
 
 /** Build the S1 module: id `s1`, `timed` exit, most-negative-funding selection (`01` §1). */
@@ -20,11 +21,7 @@ export function createStrategy1(): StrategyModule {
   return {
     id: 's1',
     exitPolicyKind: 'timed',
-    select(candidate, config) {
-      // §G-L most-negative rule: a rate at or below the (negative) threshold triggers.
-      return candidate.ratePercent <= config.thresholdPercent
-        ? { symbol: candidate.symbol, settleTs: candidate.settleTs }
-        : undefined
-    },
+    // §G-L most-negative rule, shared verbatim with S1-WS (`group-l-selection.ts`).
+    select: selectGroupL,
   }
 }

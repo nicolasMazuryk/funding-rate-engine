@@ -243,10 +243,17 @@ export function createEngine(deps: EngineDeps): Engine {
     throw new Error(`Engine: no exit-policy handler registered for kind '${activeModule.exitPolicyKind}'`)
   }
   const exitHandler: ExitPolicyHandler = resolvedHandler
-  // The port subset a handler arms against — scheduler + clock, bound once.
+  // The port subset a handler arms against — scheduler + clock + the out-of-band exit
+  // seam — bound once. `requestExit` is the gated-policy seam (`funding_fee_event`,
+  // S1-WS/S2/S6): a gate signal resolving outside `onEvent` dispatch fires the exit here,
+  // guarded on `MONITORING` so a duplicate/late signal is idempotent (the gate opens once).
   const exitCtx: ExitPolicyContext = {
     scheduleDeadline: (intentId, atMs) => void scheduler.scheduleDeadlineTimer(intentId, atMs),
     now: () => clock.now(),
+    requestExit: (intentId, exitReason) => {
+      const rec = intents.get(intentId)
+      if (rec?.state === 'MONITORING') fireExit(intentId, rec, exitReason)
+    },
   }
 
   const intents = new Map<string, IntentRecord>()
@@ -688,6 +695,7 @@ export function createEngine(deps: EngineDeps): Engine {
       return intents.get(intentId)?.fundingReceived
     },
     dispose(): void {
+      exitHandler.dispose?.() // release handler-owned resources (the funding gate's timers, S1-WS)
       unsubscribe()
     },
   }

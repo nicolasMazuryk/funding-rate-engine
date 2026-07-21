@@ -22,10 +22,12 @@ import { createVirtualClock, type VirtualClock } from '../adapters/clock/virtual
 import { createSimExchange, type SimExchange } from '../adapters/sim/sim-exchange.js'
 import { computeConfigRevisionHash } from '../config/revision-hash.js'
 import { createEventBus } from '../core/events/bus.js'
+import { createFundingFeeEventHandler } from '../core/intent/exit-policies/funding-fee-event.js'
 import { TIMED_HANDLER } from '../core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry, type ExitPolicyRegistry } from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
-import type { Balance } from '../core/ports/exchange-adapter.js'
+import type { Clock } from '../core/ports/clock.js'
+import type { Balance, ExchangeAdapter } from '../core/ports/exchange-adapter.js'
 import type { Repo } from '../core/ports/repo.js'
 import type { RiskGate } from '../core/ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../core/ports/transition-log.js'
@@ -37,6 +39,7 @@ import {
   type StrategyRegistry,
 } from '../core/strategies/registry.js'
 import { createStrategy1 } from '../core/strategies/strategy-1.js'
+import { createStrategy1Ws } from '../core/strategies/strategy-1-ws.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -106,15 +109,45 @@ export interface SkeletonHarness {
   readonly logger: Logger
 }
 
+/**
+ * Default strategy + exit-policy registries for a `strategyConfig`, keyed by its id — the
+ * harness analogue of `main.ts`'s wiring select. `s1-ws` gets the `funding_fee_event`
+ * handler (its gate reads `exchange.fundingIncome`); everything else the S1 `timed` pair.
+ * Centralized here so every harness caller — scenario/golden/e2e *and* the replay engine
+ * (which reconstructs the core from a trace header) — resolves the right handler for free.
+ */
+function defaultRegistries(
+  strategyConfig: RuntimeStrategyConfig,
+  clock: Clock,
+  exchange: ExchangeAdapter,
+): { registry: StrategyRegistry; exitPolicyRegistry: ExitPolicyRegistry } {
+  if (strategyConfig.id === 's1-ws') {
+    const handler = createFundingFeeEventHandler({
+      clock,
+      fundingIncome: (symbol, range) => exchange.fundingIncome(symbol, range),
+    })
+    return {
+      registry: createStrategyRegistry([createStrategy1Ws()]),
+      exitPolicyRegistry: createExitPolicyRegistry([handler]),
+    }
+  }
+  return {
+    registry: createStrategyRegistry([createStrategy1()]),
+    exitPolicyRegistry: createExitPolicyRegistry([TIMED_HANDLER]),
+  }
+}
+
 export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
   const clock = opts.clock ?? createVirtualClock(opts.startMs ?? 0)
   const bus = opts.bus ?? createEventBus()
   const exchange = opts.exchange ?? createSimExchange(clock, bus)
   const rawWal = createWalFile({ path: opts.walPath })
   const repo = opts.repo ?? createInMemoryRepo()
-  const registry = opts.registry ?? createStrategyRegistry([createStrategy1()])
-  const exitPolicyRegistry = opts.exitPolicyRegistry ?? createExitPolicyRegistry([TIMED_HANDLER])
   const strategyConfig = opts.strategyConfig ?? DEFAULT_RUNTIME_CONFIG
+  // Explicit registry/exit-policy opts win; otherwise default by the strategy id.
+  const defaults = defaultRegistries(strategyConfig, clock, exchange)
+  const registry = opts.registry ?? defaults.registry
+  const exitPolicyRegistry = opts.exitPolicyRegistry ?? defaults.exitPolicyRegistry
   const logger = opts.logger ?? createLogger({ instance: 'skeleton' })
   const scheduler = opts.scheduler ?? createScheduler(clock, bus)
 
