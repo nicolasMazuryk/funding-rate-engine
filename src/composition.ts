@@ -16,7 +16,10 @@
 import type { EffectiveConfig } from './config/effective-config.js'
 import { createFundingFeeEventHandler } from './core/intent/exit-policies/funding-fee-event.js'
 import { createRetracementHandler } from './core/intent/exit-policies/retracement.js'
-import { createSlTpDeadlineHandler } from './core/intent/exit-policies/sl-tp-deadline.js'
+import {
+  createLadderSlTpDeadlineHandler,
+  createSlTpDeadlineHandler,
+} from './core/intent/exit-policies/sl-tp-deadline.js'
 import { TIMED_HANDLER } from './core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry } from './core/intent/exit-policy.js'
 import type { Clock } from './core/ports/clock.js'
@@ -28,6 +31,7 @@ import { createStrategy1 } from './core/strategies/strategy-1.js'
 import { createStrategy1Ws } from './core/strategies/strategy-1-ws.js'
 import { createStrategy2 } from './core/strategies/strategy-2.js'
 import { createStrategy3a, strategy3aGeometry } from './core/strategies/strategy-3a.js'
+import { createStrategy4_1a, strategy4_1aTpGeometry } from './core/strategies/strategy-4-1a.js'
 
 /** Read a numeric strategy param or fail loud — a missing/non-numeric key is a config bug. */
 function numberParam(params: Readonly<Record<string, number | string>>, key: string): number {
@@ -91,6 +95,20 @@ export function runtimeConfigFromEffective(cfg: EffectiveConfig): RuntimeStrateg
       deadlineSeconds: numberParam(params, 'deadlineSeconds'),
     }
   }
+  // S4.1a is a LONG ladder (`05` §2): no `entrySide` (default long); reads the ladder keys +
+  // engine-side SL multiplier + per-fill TP + shared deadline. The ladder entry path is switched
+  // on by the module's `entryPlan`, not this config.
+  if (cfg.strategy === 's4-1a') {
+    return {
+      ...base,
+      ladderCount: numberParam(params, 'ladderCount'),
+      ladderTopMult: numberParam(params, 'ladderTopMult'),
+      ladderBottomMult: numberParam(params, 'ladderBottomMult'),
+      takeProfitPct: numberParam(params, 'takeProfitPct'),
+      slMultiplier: numberParam(params, 'slMultiplier'),
+      deadlineSeconds: numberParam(params, 'deadlineSeconds'),
+    }
+  }
   return { ...base, exitOffsetSeconds: numberParam(params, 'exitOffsetSeconds') }
 }
 
@@ -150,5 +168,18 @@ export function wireS3aEngine(deps: S1EngineDeps): Engine {
     ...deps,
     registry: createStrategyRegistry([createStrategy3a()]),
     exitPolicyRegistry: createExitPolicyRegistry([createSlTpDeadlineHandler(strategy3aGeometry)]),
+  })
+}
+
+/**
+ * Wire the engine with the S4.1a ladder module + the **ladder** `sl_tp_deadline` handler (task 0330).
+ * The module's `entryPlan` switches the engine to the N-rung ladder path (engine-side conditional SL
+ * armed at placement, TP re-placed per rung fill); the ladder handler owns only the per-fill TP.
+ */
+export function wireS4_1aEngine(deps: S1EngineDeps): Engine {
+  return createEngine({
+    ...deps,
+    registry: createStrategyRegistry([createStrategy4_1a()]),
+    exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
   })
 }

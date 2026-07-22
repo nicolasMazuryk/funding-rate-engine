@@ -24,6 +24,7 @@ without a `seq`; every other kind shares one monotonic `seq` counter.
 | `transition` | Recorded **output** — a WAL transition | **yes** | `seq`, `ts`, `intentId`, `fromState`, `toState`, `payload`, `clientOrderId?` |
 | `order-action` | Venue submit/cancel — **diagnostic only** | no | `seq`, `ts`, `action` (`place`\|`cancel`), `clientOrderId`, `symbol`, `side`, `qty`, `reduceOnly?` |
 | `gate` | Funding-gate open/close — **diagnostic only** | no | `seq`, `ts`, `intentId`, `event` (`funding_gate_opened`\|`funding_gate_closed`), `source?` (`ws`\|`rest`), `offsetS?`, `reason?` (`opened`\|`timeout`) |
+| `ops` | Engine ops event (S4.1a `ladder.pre_funding_fill`) — **diagnostic only** | no | `seq`, `ts`, `intentId`, `event` (ops name), `symbol?` |
 
 ## Input / output contract
 
@@ -43,6 +44,11 @@ without a `seq`; every other kind shares one monotonic `seq` counter.
   observations (task 0290). Never diffed on replay; additive, so `v` stays `1`. The
   gate golden fixture is a **direct byte-compare** (the standalone gate scenario emits
   no WAL transitions, so there is nothing for `replayTrace` to round-trip).
+- **`ops` = diagnostic only.** Engine ops events surfaced via the `onOpsEvent` dep
+  (task 0330) — currently only S4.1a's `ladder.pre_funding_fill` (a ladder rung filling
+  before `T_settle`, `05` §2 step 2). Never diffed on replay; additive, so `v` stays `1`.
+  Written by the harness when a trace is attached, keyed to the same `seq` counter, so a
+  golden that hits the pre-funding path carries it in observed order.
 
 ## Ordering rule (load-bearing)
 

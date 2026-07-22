@@ -133,6 +133,14 @@ export interface ExitPolicyHandler {
     config: RuntimeStrategyConfig,
     ctx: ExitPolicyContext,
   ): void
+  /**
+   * React to a ladder entry-rung fill (`05_strategy_4_1a.md` §2 step 3) — called by the
+   * engine after **each** rung fill with `intent.entryFillPx` = current `P_avg` and
+   * `intent.entryFillQty` = current filled qty. S4.1a re-places its TP (cancel prior,
+   * place fresh at `P_avg × (1 + takeProfitPct/100)`, qty = filled qty). Absent ⇒ the
+   * engine never calls it (non-ladder strategies unaffected).
+   */
+  onEntryFill?(intent: MonitoredIntent, config: RuntimeStrategyConfig, ctx: ExitPolicyContext): void
   /** Release any handler-owned resources (timers/gates) on engine shutdown. Absent ⇒ nothing to release. */
   dispose?(): void
 }

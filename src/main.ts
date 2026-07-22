@@ -27,6 +27,7 @@ import {
   wireS1WsEngine,
   wireS2Engine,
   wireS3aEngine,
+  wireS4_1aEngine,
 } from './composition.js'
 import type { EffectiveConfig } from './config/effective-config.js'
 import { createInstrumentValidationHook } from './config/instrument-validation.js'
@@ -115,9 +116,11 @@ async function run(): Promise<void> {
       ? wireS2Engine(engineDeps, gateDeps)
       : cfg.strategy === 's3a'
         ? wireS3aEngine(engineDeps)
-        : cfg.strategy === 's1-ws'
-          ? wireS1WsEngine(engineDeps, gateDeps)
-          : wireS1Engine(engineDeps)
+        : cfg.strategy === 's4-1a'
+          ? wireS4_1aEngine(engineDeps)
+          : cfg.strategy === 's1-ws'
+            ? wireS1WsEngine(engineDeps, gateDeps)
+            : wireS1Engine(engineDeps)
 
   scheduler.start()
   logger.info('instance running')

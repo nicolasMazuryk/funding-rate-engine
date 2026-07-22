@@ -147,6 +147,12 @@ function runReplay(records: readonly TraceRecord[], header: TraceHeader): Seqd[]
     exchange: createReplayExchange(clock, bus),
     scheduler: createInertScheduler(),
     strategyConfig: header.strategyConfig as RuntimeStrategyConfig,
+    // Replay reproduces already-decided transitions from the recorded event stream; the risk gate's
+    // limits are an edge-config concern not carried in the trace header (the harness default caps
+    // notional at 100, which would spuriously ABORT a larger capture, e.g. S4.1a's 300-USD ladder).
+    // Always-allow keeps replay faithful to the captured decisions. (Threading risk limits into the
+    // header is a SUGGESTION.)
+    riskGate: { check: () => ({ allowed: true }) },
   })
   try {
     for (const record of records) {

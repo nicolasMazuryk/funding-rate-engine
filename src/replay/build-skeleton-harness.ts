@@ -24,7 +24,10 @@ import { computeConfigRevisionHash } from '../config/revision-hash.js'
 import { createEventBus } from '../core/events/bus.js'
 import { createFundingFeeEventHandler } from '../core/intent/exit-policies/funding-fee-event.js'
 import { createRetracementHandler } from '../core/intent/exit-policies/retracement.js'
-import { createSlTpDeadlineHandler } from '../core/intent/exit-policies/sl-tp-deadline.js'
+import {
+  createLadderSlTpDeadlineHandler,
+  createSlTpDeadlineHandler,
+} from '../core/intent/exit-policies/sl-tp-deadline.js'
 import { TIMED_HANDLER } from '../core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry, type ExitPolicyRegistry } from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
@@ -33,7 +36,7 @@ import type { Balance, ExchangeAdapter } from '../core/ports/exchange-adapter.js
 import type { Repo } from '../core/ports/repo.js'
 import type { RiskGate } from '../core/ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../core/ports/transition-log.js'
-import { createEngine, type Engine, type ReconciliationRecord } from '../core/runtime/engine.js'
+import { createEngine, type Engine, type OpsEvent, type ReconciliationRecord } from '../core/runtime/engine.js'
 import { createScheduler, type Scheduler } from '../core/runtime/scheduler.js'
 import {
   createStrategyRegistry,
@@ -44,6 +47,7 @@ import { createStrategy1 } from '../core/strategies/strategy-1.js'
 import { createStrategy1Ws } from '../core/strategies/strategy-1-ws.js'
 import { createStrategy2 } from '../core/strategies/strategy-2.js'
 import { createStrategy3a, strategy3aGeometry } from '../core/strategies/strategy-3a.js'
+import { createStrategy4_1a, strategy4_1aTpGeometry } from '../core/strategies/strategy-4-1a.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -94,6 +98,8 @@ export interface BuildOpts {
   readonly initialBalance?: Balance
   readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
   readonly onReconciliation?: (record: ReconciliationRecord) => void
+  /** Diagnostic ops-event sink (S4.1a `ladder.pre_funding_fill`); defaults to writing an `ops` trace record. */
+  readonly onOpsEvent?: (event: OpsEvent) => void
   readonly logger?: Logger
 }
 
@@ -152,6 +158,14 @@ function defaultRegistries(
       exitPolicyRegistry: createExitPolicyRegistry([createSlTpDeadlineHandler(strategy3aGeometry)]),
     }
   }
+  if (strategyConfig.id === 's4-1a') {
+    // S4.1a's ladder: `entryPlan` drives the N-rung engine path + engine-side SL; the handler owns
+    // only the per-fill TP re-place (`05` §2/§3).
+    return {
+      registry: createStrategyRegistry([createStrategy4_1a()]),
+      exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
+    }
+  }
   return {
     registry: createStrategyRegistry([createStrategy1()]),
     exitPolicyRegistry: createExitPolicyRegistry([TIMED_HANDLER]),
@@ -204,6 +218,15 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     opts.onReconciliation ??
     ((record: ReconciliationRecord) => logger.info({ reconciliation: record }, 'reconciliation'))
 
+  // Default ops-event sink: write an `ops` trace record (diagnostic, never diffed) so a golden run
+  // that hits `ladder.pre_funding_fill` carries it; absent a trace, drop it. Explicit opt wins.
+  const onOpsEvent =
+    opts.onOpsEvent ??
+    (trace
+      ? (event: OpsEvent) =>
+          trace.recordOps({ ts: clock.now(), intentId: event.intentId, event: event.kind, symbol: event.symbol })
+      : undefined)
+
   const engine = createEngine({
     bus,
     clock,
@@ -219,6 +242,7 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     initialBalance,
     accountSetupComplete: opts.accountSetupComplete,
     onReconciliation,
+    onOpsEvent,
   })
 
   return {

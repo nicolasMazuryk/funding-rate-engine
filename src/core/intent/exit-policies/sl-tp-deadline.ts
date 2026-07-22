@@ -16,7 +16,7 @@
  */
 
 import type { RuntimeStrategyConfig } from '../../strategies/registry.js'
-import type { ExitPolicyHandler, MonitoredIntent } from '../exit-policy.js'
+import type { ExitPolicyContext, ExitPolicyHandler, MonitoredIntent } from '../exit-policy.js'
 
 /**
  * The per-variant price math the handler is parameterized by (`04` §3, and 0330/0340). Each
@@ -101,6 +101,79 @@ export function createSlTpDeadlineHandler(geometry: SlTpDeadlineGeometry): ExitP
       records.delete(intent.intentId)
       // OCO close: the fill already flattened; `confirmClose` records CLOSED and sweeps the sibling.
       ctx.confirmClose(intent.intentId, leg, event.clientOrderId)
+    },
+  }
+}
+
+/** Per-variant TP price math for the ladder handler (`05` §3): a raw TP limit above `P_avg`. */
+export interface LadderTpGeometry {
+  /** TP limit from the current fill-weighted average (`P_avg × (1 + takeProfitPct/100)`). */
+  tpPrice(pAvg: number, config: RuntimeStrategyConfig, ratePercent?: number): number
+}
+
+/** Live per-intent ladder handler state: the resting TP's client order id + its attempt counter. */
+interface LadderRecord {
+  tpCoid?: string
+  tpAttempt: number
+}
+
+/**
+ * Build the **ladder** variant of the `sl_tp_deadline` handler (S4.1a, `05` §2/§3). Unlike the
+ * base handler it owns neither the SL (engine-side conditional stop, `conditional-stop.ts`) nor
+ * the deadline (the engine schedules it in `SUBMITTING_ENTRY` so a zero-fill ladder can terminate
+ * before this handler ever arms). It owns only the reduce-only TP, which is (re-)placed on every
+ * rung fill via {@link ExitPolicyHandler.onEntryFill}: cancel the prior TP, place a fresh one
+ * sized to the filled qty at the updated `P_avg`. A TP fill drives the OCO close; the deadline
+ * routes to the market close via `requestExit`.
+ */
+export function createLadderSlTpDeadlineHandler(geometry: LadderTpGeometry): ExitPolicyHandler {
+  const records = new Map<string, LadderRecord>()
+
+  /** (Re-)place the TP for the current `P_avg`, cancelling any prior resting TP first. */
+  function placeTp(intent: MonitoredIntent, config: RuntimeStrategyConfig, ctx: ExitPolicyContext): void {
+    if (intent.entryFillPx === undefined) {
+      throw new Error(`LADDER_SL_TP_DEADLINE: intent '${intent.intentId}' has no entryFillPx (P_avg) for the TP`)
+    }
+    const rec = records.get(intent.intentId) ?? { tpAttempt: 0 }
+    if (rec.tpCoid !== undefined) ctx.cancelExitLeg(rec.tpCoid)
+    rec.tpAttempt += 1
+    rec.tpCoid = ctx.placeExitLeg(intent.intentId, {
+      leg: 'tp',
+      attempt: rec.tpAttempt,
+      type: 'limit',
+      price: geometry.tpPrice(intent.entryFillPx, config, intent.ratePercent),
+      qty: intent.entryFillQty ?? intent.entryQty,
+    })
+    records.set(intent.intentId, rec)
+  }
+
+  return {
+    kind: 'sl_tp_deadline',
+
+    arm(intent): number | undefined {
+      // Ladder: the SL (engine conditional stop) + the deadline are already armed/scheduled by the
+      // engine at placement time; the TP is placed by `onEntryFill`. Return the engine's deadline.
+      return intent.deadlineMs
+    },
+
+    onEntryFill(intent, config, ctx): void {
+      placeTp(intent, config, ctx)
+    },
+
+    onEvent(event, intent, _config, ctx): undefined {
+      if (event.type === 'Timer' && event.kind === 'deadline' && event.intentId === intent.intentId) {
+        records.delete(intent.intentId)
+        ctx.requestExit(intent.intentId, 'deadline')
+      }
+      return undefined
+    },
+
+    onOrderUpdate(event, intent, _config, ctx): void {
+      const rec = records.get(intent.intentId)
+      if (rec === undefined || event.status !== 'FILLED' || event.clientOrderId !== rec.tpCoid) return
+      records.delete(intent.intentId)
+      // OCO close: the TP fill already flattened; `confirmClose` records CLOSED and sweeps siblings.
+      ctx.confirmClose(intent.intentId, 'tp_hit', event.clientOrderId)
     },
   }
 }

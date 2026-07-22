@@ -44,10 +44,18 @@ export interface RuntimeStrategyConfig {
   readonly fundingFeeTimeoutSeconds?: number
   /** Trailing-TP retracement fraction [0,1] (`retracement_pct`, `03` §5 — the lone fraction key). S2 only. */
   readonly retracementPct?: number
-  /** SL distance multiplier on `|F|` (`sl_multiplier`, `03` §5). S2 only. */
+  /** SL distance multiplier on `|F|` (`sl_multiplier`, `03` §5 / `05` §2). S2 + S4.1a. */
   readonly slMultiplier?: number
-  /** Deadline horizon past `T_settle`, seconds (`deadline_seconds`, `03` §5). S2 only. */
+  /** Deadline horizon past `T_settle`, seconds (`deadline_seconds`, `03` §5 / `05` §5). S2 + S3a + S4.1a. */
   readonly deadlineSeconds?: number
+  /** Ladder rung count (`ladder_count`, `05` §5). S4.1a only — presence drives the ladder entry path. */
+  readonly ladderCount?: number
+  /** Top-rung offset multiplier on `|F|` (`ladder_top_mult`, `05` §2). S4.1a only. */
+  readonly ladderTopMult?: number
+  /** Bottom-rung offset multiplier on `|F|` (`ladder_bottom_mult`, `05` §2; `> ladderTopMult`). S4.1a only. */
+  readonly ladderBottomMult?: number
+  /** TP distance above `P_avg`, percent (`take_profit_pct`, `05` §3). S4.1a only. */
+  readonly takeProfitPct?: number
   /** Fixed notional per intent, quote currency (`00_globals.md` §4); sized to a qty in the runtime (`00_globals.md` §4). */
   readonly amountUsd: number
   /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */
@@ -64,12 +72,35 @@ export interface StrategyTrigger {
   readonly settleTs: number
 }
 
+/**
+ * Ladder entry geometry (`05_strategy_4_1a.md` §2) — the pure strategy math a
+ * ladder module supplies. Presence of {@link StrategyModule.entryPlan} switches the
+ * engine from its single market entry to the N-rung ladder path; the two callbacks
+ * own all S4.1a price math (rung ladder + engine-side SL anchor) while the engine
+ * owns placement, aggregation, and the conditional-stop lifecycle.
+ */
+export interface LadderEntryPlan {
+  /**
+   * Rung BUY-LIMIT prices below `refPrice` (`05` §2): `ladder_top/bottom = refPrice ×
+   * (1 − |F| × mult/100)`, linearly interpolated across `ladderCount`. `|F| =
+   * abs(ratePercent ?? thresholdPercent)`. Prices are raw — the engine tick-snaps them.
+   */
+  rungPrices(refPrice: number, config: RuntimeStrategyConfig, ratePercent?: number): number[]
+  /** Engine-side conditional-SL trigger from the precomputed `P_avg_full` (`05` §2 step 1). */
+  slTriggerPrice(pAvgFull: number, config: RuntimeStrategyConfig, ratePercent?: number): number
+}
+
 /** One strategy module: an id, its exit-policy family, and a pure selector. */
 export interface StrategyModule {
   readonly id: StrategyId
   readonly exitPolicyKind: ExitPolicyKind
   /** Apply the module's own threshold rule to a guarded candidate; `undefined` declines. */
   select(candidate: Candidate, config: RuntimeStrategyConfig): StrategyTrigger | undefined
+  /**
+   * Ladder entry geometry (`05` §2, S4.1a/S4.2a). Absent ⇒ the engine uses its single
+   * market entry (every non-ladder strategy is byte-unchanged); present ⇒ the ladder path.
+   */
+  readonly entryPlan?: LadderEntryPlan
 }
 
 export type StrategyRegistry = ReadonlyMap<StrategyId, StrategyModule>

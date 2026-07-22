@@ -47,8 +47,14 @@ import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-ad
 import type { Repo } from '../ports/repo.js'
 import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
-import { capReduceOnlyQty, computeQty, roundPrice } from '../sizing/sizing.js'
-import type { RuntimeStrategyConfig, StrategyModule, StrategyRegistry } from '../strategies/registry.js'
+import { capReduceOnlyQty, computeQty, roundPrice, splitLadder } from '../sizing/sizing.js'
+import type {
+  LadderEntryPlan,
+  RuntimeStrategyConfig,
+  StrategyModule,
+  StrategyRegistry,
+} from '../strategies/registry.js'
+import { type ConditionalStop, isTriggered } from './conditional-stop.js'
 import { evaluateProfitCondition, type ProfitBreakdown } from './cost-model.js'
 import { type FindCandidatesInput, findCandidates } from './finder.js'
 import { computeFundingSchedule } from './funding-schedule.js'
@@ -84,6 +90,20 @@ export interface EngineDeps {
   readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
   /** Reconciliation sink invoked after `CLOSED` (composition logs the diff; no throw on mismatch). */
   readonly onReconciliation?: (record: ReconciliationRecord) => void
+  /**
+   * Diagnostic ops-event sink (mirrors {@link onReconciliation}) — the ladder's
+   * `ladder.pre_funding_fill` (`05` §2 step 2). Composition logs it + writes a trace record;
+   * absent ⇒ the engine emits nothing.
+   */
+  readonly onOpsEvent?: (event: OpsEvent) => void
+}
+
+/** A diagnostic engine ops event surfaced via {@link EngineDeps.onOpsEvent} (`05` §2 step 2). */
+export interface OpsEvent {
+  /** The only ops event so far: a ladder rung filled before `T_settle`. */
+  readonly kind: 'ladder.pre_funding_fill'
+  readonly intentId: string
+  readonly symbol: string
 }
 
 /**
@@ -170,6 +190,25 @@ interface IntentRecord {
   exitReason?: ExitReason
   /** Advisory cost-model breakdown captured at selection (task 0150); in-memory analytics only, never WAL'd. */
   costBreakdown?: ProfitBreakdown
+  /**
+   * Ladder entry state (S4.1a, `05` §2). Present ⇒ this is a ladder intent. In-memory only
+   * (NOT WAL'd; 0370 re-derives): the N rung orders, the precomputed full-ladder `P_avg_full`
+   * the engine-side SL anchors on, and the running fill aggregates that drive `entryFillPx`/`entryFillQty`.
+   */
+  ladderRungs?: LadderRung[]
+  pAvgFull?: number
+  /** Running Σ filled base qty across rungs. */
+  filledQty?: number
+  /** Running Σ (fill price · qty) across rungs — divided by {@link filledQty} for `P_avg`. */
+  filledNotional?: number
+}
+
+/** One ladder rung's engine bookkeeping: its client order id, target price/qty, and whether it filled. */
+interface LadderRung {
+  readonly coid: string
+  readonly price: number
+  readonly qty: number
+  filled: boolean
 }
 
 /**
@@ -291,6 +330,9 @@ export function createEngine(deps: EngineDeps): Engine {
 
   const intents = new Map<string, IntentRecord>()
   const pendingOrders = new Map<string, PendingOrder>()
+  // Engine-side conditional stops (S4.1a), armed at ladder placement, evaluated on every
+  // `MarketTick`, disarmed on any exit (`05` §2 step 1). In-memory only (0370 re-derives).
+  const conditionalStops = new Map<string, ConditionalStop>()
   const predicted = new Map<string, FundingPredicted>()
   // Settlement instant per symbol, stashed at selection (`onScan`) and read at entry
   // (`onEntry`) — the `timed` exit's anchor, mirroring the `predicted`/`costBySymbol` maps.
@@ -421,6 +463,14 @@ export function createEngine(deps: EngineDeps): Engine {
   function onEntry(event: Timer): void {
     const symbol = event.symbol
     if (symbol === undefined) return
+    // Ladder strategies (S4.1a) pre-place N rung limits + an engine-side SL instead of one
+    // market order (`05` §2). Presence of the plan is the switch — every non-ladder strategy
+    // stays on the single-market path unchanged.
+    if (activeModule.entryPlan !== undefined) {
+      onEntryLadder(event, symbol, activeModule.entryPlan)
+      return
+    }
+
     const intentId = `${symbol}-${event.ts}`
 
     // Real sizing (`00_globals.md` §4): `amountUsd / price → qty`, lot-floored. An unknown
@@ -469,6 +519,96 @@ export function createEngine(deps: EngineDeps): Engine {
     void exchange.placeOrder({ symbol, side: rec.entrySide, type: 'market', qty: rec.entryQty, clientOrderId })
   }
 
+  /**
+   * Ladder entry path (S4.1a, `05` §2): pre-place N BUY-LIMIT rungs below `P_ref`, arm the
+   * engine-side conditional SL anchored to the precomputed `P_avg_full`, and engine-schedule the
+   * deadline (owned by the engine, not the handler, so a zero-fill ladder can terminate before the
+   * handler ever arms). Fail-closed on an unknown price; skip the symbol entirely when the top rung
+   * is infeasible (§G-R feasibility gate — no intent row, no trace).
+   */
+  function onEntryLadder(event: Timer, symbol: string, plan: LadderEntryPlan): void {
+    const intentId = `${symbol}-${event.ts}`
+    const refPrice = latestPrice.get(symbol)
+    if (refPrice === undefined) return // fail-closed, as the market path does
+
+    const instrument = exchange.normalize(symbol)
+    const ratePercent = rateBySymbol.get(symbol)
+    const snapped = plan.rungPrices(refPrice, strategyConfig, ratePercent).map((p) => roundPrice(p, instrument))
+    const rungSplit = splitLadder(strategyConfig.amountUsd, snapped, instrument)
+    if (rungSplit.length === 0) return // top rung infeasible → skip symbol entirely (§G-R), no trace
+
+    const totalQty = rungSplit.reduce((sum, r) => sum + r.qty, 0)
+    // Preflight on the total qty before creating the intent row: `skip` leaves no trace.
+    const result = runPreflight(preflightSnapshot(symbol, totalQty), riskGate, symbol)
+    if (result.kind === 'skip') return
+
+    const settleTs = settleBySymbol.get(symbol)
+    const rec: IntentRecord = {
+      symbol,
+      state: 'SELECTED',
+      entrySide,
+      entryQty: totalQty,
+      settleTs,
+      anchorPrice: refPrice,
+      ratePercent,
+      filledQty: 0,
+      filledNotional: 0,
+    }
+    const stashedCost = costBySymbol.get(symbol)
+    if (stashedCost !== undefined) rec.costBreakdown = stashedCost
+    intents.set(intentId, rec)
+
+    if (result.kind === 'reject') {
+      commit({ intentId, symbol, from: 'SELECTED', to: 'ABORTED', payload: { errorCode: result.errorCode } })
+      return
+    }
+
+    // P_avg_full over the placed rungs (`05` §2 step 1): the engine-side SL anchor, known in advance.
+    const pAvgFull = rungSplit.reduce((sum, r) => sum + r.price * r.qty, 0) / totalQty
+    rec.pAvgFull = pAvgFull
+    if (settleTs === undefined || strategyConfig.deadlineSeconds === undefined) {
+      throw new Error(`Engine: ladder intent '${intentId}' missing settleTs/deadlineSeconds for the deadline`)
+    }
+    const deadlineMs = settleTs + strategyConfig.deadlineSeconds * 1000
+    rec.deadlineMs = deadlineMs
+
+    const rungs: LadderRung[] = rungSplit.map((r, i) => ({
+      coid: makeClientOrderId({ intentId, leg: 'entry', attempt: i + 1 }),
+      price: r.price,
+      qty: r.qty,
+      filled: false,
+    }))
+    rec.ladderRungs = rungs
+    const firstCoid = rungs[0]?.coid
+
+    commit({
+      intentId,
+      symbol,
+      from: 'SELECTED',
+      to: 'SUBMITTING_ENTRY',
+      payload: {},
+      extras: { clientOrderId: firstCoid, entrySide, entryQty: totalQty, tSettleMs: settleTs },
+    })
+    for (const rung of rungs) {
+      pendingOrders.set(rung.coid, { intentId, leg: 'entry' })
+      void exchange.placeOrder({
+        symbol,
+        side: entrySide,
+        type: 'limit',
+        qty: rung.qty,
+        price: rung.price,
+        clientOrderId: rung.coid,
+      })
+    }
+    // Arm the SL at placement time (before any fill — `05` §2 step 1), and engine-schedule the deadline.
+    conditionalStops.set(intentId, {
+      intentId,
+      triggerPrice: plan.slTriggerPrice(pAvgFull, strategyConfig, ratePercent),
+      side: entrySide,
+    })
+    scheduler.scheduleDeadlineTimer(intentId, deadlineMs)
+  }
+
   /** Project a MONITORING intent record into the read-only shape the exit policy observes. */
   function toMonitoredIntent(intentId: string, rec: IntentRecord): MonitoredIntent {
     return {
@@ -505,13 +645,18 @@ export function createEngine(deps: EngineDeps): Engine {
   function fireExit(intentId: string, rec: IntentRecord, exitReason: ExitReason): void {
     const clientOrderId = makeClientOrderId({ intentId, leg: 'exit', attempt: 1 })
     rec.exitReason = exitReason
+    // Disarm any engine-side stop the moment we exit, so a raced later tick can't re-fire it.
+    conditionalStops.delete(intentId)
     commit({ intentId, symbol: rec.symbol, from: 'MONITORING', to: 'EXITING', payload: {}, extras: { clientOrderId } })
     pendingOrders.set(clientOrderId, { intentId, leg: 'exit' })
     void exchange.placeOrder({
       symbol: rec.symbol,
       side: exitSide,
       type: 'market',
-      qty: rec.entryQty,
+      // Reduce-only the *filled* qty — for a ladder that is the aggregate of filled rungs, not the
+      // full planned `entryQty` (`05` §2). Non-ladder strategies set `entryFillQty` on fill, so this
+      // is a no-op change for them.
+      qty: rec.entryFillQty ?? rec.entryQty,
       clientOrderId,
       reduceOnly: true,
     })
@@ -545,11 +690,31 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /** Record `→ CLOSED`, sweep any sibling reduce-only legs, and reconcile — the shared exit tail. */
   function closeFromExiting(intentId: string, rec: IntentRecord, exitReason: ExitReason): void {
+    conditionalStops.delete(intentId) // disarm the engine-side SL (idempotent with fireExit)
     commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason } })
     // Post-exit reduce-only sweep (`00_globals.md` §5.2, `01` §2 step 5): cancel the sibling
     // legs still tracked open for this symbol (S2's SL/TP OCO); no-op on S1's market-exit path.
     sweepReduceOnlyOrders(intentId, rec.symbol)
     void finishReconciliation(intentId)
+  }
+
+  /**
+   * Evaluate the engine-side conditional stops for `symbol` against `price` (`05` §2 step 1). A
+   * triggered stop with filled qty market-closes the *filled* qty (`sl_hit`); a degenerate trigger
+   * with nothing filled (pre-fill gap-through) cancels the rungs → `NO_POSITION{ladder_no_fills}`.
+   */
+  function evaluateConditionalStops(symbol: string, price: number): void {
+    for (const [intentId, stop] of [...conditionalStops]) {
+      const rec = intents.get(intentId)
+      if (rec === undefined || rec.symbol !== symbol) continue
+      if (!isTriggered(stop, price)) continue
+      conditionalStops.delete(intentId)
+      if ((rec.filledQty ?? 0) > 0 && rec.state === 'MONITORING') {
+        fireExit(intentId, rec, 'sl_hit')
+      } else if (rec.state === 'SUBMITTING_ENTRY') {
+        terminateLadderNoFills(intentId, rec)
+      }
+    }
   }
 
   /** Route one MONITORING event through the active exit-policy handler; fire the exit on a decision (`12` §5). */
@@ -564,7 +729,37 @@ export function createEngine(deps: EngineDeps): Engine {
   function onTimer(event: Timer): void {
     if (event.kind === 'scan') onScan(event)
     else if (event.kind === 'entry') onEntry(event)
-    else dispatchToExitPolicy(event)
+    else onDeadline(event)
+  }
+
+  /**
+   * A `deadline` Timer. A zero-fill ladder still in `SUBMITTING_ENTRY` terminates here
+   * (`05` §2 step 6) — `dispatchToExitPolicy` would drop it since it targets only MONITORING.
+   * A MONITORING intent (ladder or not) routes to the exit policy as before.
+   */
+  function onDeadline(event: Timer): void {
+    const intentId = event.intentId
+    if (intentId !== undefined) {
+      const rec = intents.get(intentId)
+      if (rec?.state === 'SUBMITTING_ENTRY' && rec.ladderRungs !== undefined) {
+        terminateLadderNoFills(intentId, rec)
+        return
+      }
+    }
+    dispatchToExitPolicy(event)
+  }
+
+  /** Cancel all unfilled rungs and terminate a zero-fill ladder `NO_POSITION{ladder_no_fills}` (`05` §2 step 6). */
+  function terminateLadderNoFills(intentId: string, rec: IntentRecord): void {
+    conditionalStops.delete(intentId)
+    sweepReduceOnlyOrders(intentId, rec.symbol) // cancels the unfilled entry rungs (no exit legs exist yet)
+    commit({
+      intentId,
+      symbol: rec.symbol,
+      from: 'SUBMITTING_ENTRY',
+      to: 'NO_POSITION',
+      payload: { errorCode: 'ladder_no_fills' },
+    })
   }
 
   /** Adopt an entry fill (real update or recovered-and-confirmed): record it and advance to `MONITORING`. */
@@ -604,6 +799,10 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   function onEntryOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
+    if (rec.ladderRungs !== undefined) {
+      onLadderRungUpdate(event, intentId, rec)
+      return
+    }
     if (event.status === 'FILLED') {
       pendingOrders.delete(event.clientOrderId)
       adoptEntryFill(intentId, rec, event.fillPx, event.qty)
@@ -614,6 +813,76 @@ export function createEngine(deps: EngineDeps): Engine {
       const errorCode: ErrorCode = event.status === 'REJECTED' ? 'main_order_rejected' : 'main_order_failed'
       commit({ intentId, symbol: rec.symbol, from: 'SUBMITTING_ENTRY', to: 'ENTRY_FAILED', payload: { errorCode } })
     }
+  }
+
+  /**
+   * One ladder rung update (S4.1a, `05` §2 step 2/3). A rung FILLED aggregates into the running
+   * `P_avg`; the first fill advances `SUBMITTING_ENTRY → MONITORING`, each fill (re-)places the TP.
+   * A rung filling while the intent is already exiting is the cancel/fill race — closed by a
+   * protective reduce-only market (`05` §2 step 4). Non-fill terminals (reject/cancel/expire) just
+   * drop the rung from tracking; a single dead rung never fails the whole ladder.
+   */
+  function onLadderRungUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
+    const rung = rec.ladderRungs?.find((r) => r.coid === event.clientOrderId)
+    if (event.status === 'FILLED') {
+      pendingOrders.delete(event.clientOrderId)
+      if (rung !== undefined) rung.filled = true
+      if (rec.state === 'EXITING' || rec.state === 'CLOSED') {
+        // Cancel/fill race: the exit is in flight but this rung crossed — protectively close its qty.
+        protectiveClose(intentId, rec, event.qty ?? 0, rung)
+        return
+      }
+      aggregateRungFill(intentId, rec, event.fillPx, event.qty ?? 0)
+      return
+    }
+    if (
+      event.status === 'REJECTED' ||
+      event.status === 'FAILED' ||
+      event.status === 'CANCELLED' ||
+      event.status === 'EXPIRED'
+    ) {
+      pendingOrders.delete(event.clientOrderId)
+    }
+  }
+
+  /** Fold a rung fill into the running fill-weighted `P_avg`, advance to MONITORING on the first fill, re-place the TP. */
+  function aggregateRungFill(intentId: string, rec: IntentRecord, fillPx: number | undefined, fillQty: number): void {
+    if (fillPx === undefined || fillQty <= 0) return
+    rec.filledNotional = (rec.filledNotional ?? 0) + fillPx * fillQty
+    rec.filledQty = (rec.filledQty ?? 0) + fillQty
+    const pAvg = rec.filledNotional / rec.filledQty
+
+    if (rec.state === 'SUBMITTING_ENTRY') {
+      // First fill: a pre-settlement rung fill is kept but flagged (`05` §2 step 2); then → MONITORING
+      // with the aggregate (ladder `arm` places nothing, returns the engine-scheduled deadline).
+      const enteredAtMs = clock.now()
+      if (rec.settleTs !== undefined && enteredAtMs < rec.settleTs) {
+        deps.onOpsEvent?.({ kind: 'ladder.pre_funding_fill', intentId, symbol: rec.symbol })
+      }
+      adoptEntryFill(intentId, rec, pAvg, rec.filledQty)
+    } else if (rec.state === 'MONITORING') {
+      // Subsequent (lower) fill: recompute the aggregate; the TP re-place resizes/reprices the exit.
+      rec.entryFillPx = pAvg
+      rec.entryFillQty = rec.filledQty
+    }
+    if (rec.state === 'MONITORING') {
+      exitHandler.onEntryFill?.(toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
+    }
+  }
+
+  /** Protective reduce-only market close of a rung that filled during exit (`05` §2 step 4). Fire-and-forget. */
+  function protectiveClose(intentId: string, rec: IntentRecord, qty: number, rung: LadderRung | undefined): void {
+    if (qty <= 0) return
+    const attempt = rung ? (rec.ladderRungs?.indexOf(rung) ?? 0) + 1 : 1
+    const clientOrderId = makeClientOrderId({ intentId, leg: 'protect', attempt })
+    void exchange.placeOrder({
+      symbol: rec.symbol,
+      side: exitSide,
+      type: 'market',
+      qty,
+      clientOrderId,
+      reduceOnly: true,
+    })
   }
 
   function onExitOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
@@ -639,13 +908,16 @@ export function createEngine(deps: EngineDeps): Engine {
    */
   function sweepReduceOnlyOrders(intentId: string, symbol: string): void {
     for (const [clientOrderId, pending] of [...pendingOrders]) {
-      if (pending.leg !== 'exit' && pending.leg !== 'exit-policy') continue
+      const isExitLeg = pending.leg === 'exit' || pending.leg === 'exit-policy'
+      // Ladder exit also cancels this intent's still-unfilled entry rungs (`05` §2 step 4): they
+      // rest open until exit, then are cancelled — never earlier. Only the closing intent's rungs.
+      const isLadderEntry = pending.leg === 'entry' && pending.intentId === intentId
+      if (!isExitLeg && !isLadderEntry) continue
       if (intents.get(pending.intentId)?.symbol !== symbol) continue
       pendingOrders.delete(clientOrderId)
       // Best-effort: a since-filled/unknown order throws — swallow it, the intent is CLOSED.
       void exchange.cancelOrder(clientOrderId).catch(() => {})
     }
-    void intentId // referenced for symmetry with the persisted intent scope; no per-intent state to clear.
   }
 
   function onOrderUpdate(event: OrderUpdate): void {
@@ -688,6 +960,9 @@ export function createEngine(deps: EngineDeps): Engine {
       // reaches the exit policy (a MONITORING event) via the registry.
       case 'MarketTick':
         latestPrice.set(event.symbol, event.price)
+        // Engine-side SL first (`05` §2/§3): a triggered ladder stop fires before the tick reaches
+        // the exit policy, so a MONITORING intent exits on this tick rather than resting a TP off it.
+        evaluateConditionalStops(event.symbol, event.price)
         dispatchToExitPolicy(event)
         return
       case 'BalanceUpdate':

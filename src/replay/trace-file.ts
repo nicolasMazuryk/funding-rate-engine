@@ -91,7 +91,25 @@ export interface TraceGate {
   readonly reason?: string
 }
 
-export type TraceRecord = TraceHeader | TraceEvent | TraceTransition | TraceOrderAction | TraceGate
+/**
+ * An engine ops event — diagnostic only, never diffed (task 0330; `docs/trace-format.md`).
+ * How `ladder.pre_funding_fill` (a rung filling before `T_settle`, `05` §2 step 2) reaches the
+ * trace. Additive like {@link TraceGate}: `TRACE_VERSION` stays `1` (replay rejects an unknown
+ * `v`, not an unknown `kind`, and diffs only `transition` records, so an `ops` record is ignored
+ * on replay).
+ */
+export interface TraceOps {
+  readonly v: 1
+  readonly kind: 'ops'
+  readonly seq: number
+  readonly ts: number
+  readonly intentId: string
+  /** The ops event name, e.g. `ladder.pre_funding_fill`. */
+  readonly event: string
+  readonly symbol?: string
+}
+
+export type TraceRecord = TraceHeader | TraceEvent | TraceTransition | TraceOrderAction | TraceGate | TraceOps
 
 export interface TraceFile {
   /** Write the config header (call once, before any other record). */
@@ -104,6 +122,8 @@ export interface TraceFile {
   recordOrderAction(action: Omit<TraceOrderAction, 'v' | 'kind' | 'seq'>): void
   /** Append a funding-gate open/close as a `gate` record (diagnostic only). */
   recordGate(gate: Omit<TraceGate, 'v' | 'kind' | 'seq'>): void
+  /** Append an engine ops event as an `ops` record (diagnostic only). */
+  recordOps(ops: Omit<TraceOps, 'v' | 'kind' | 'seq'>): void
   /** Release the open file descriptor. */
   close(): void
 }
@@ -142,6 +162,9 @@ export function createTraceFile({ path }: { readonly path: string }): TraceFile 
     },
     recordGate(gate): void {
       write({ v: TRACE_VERSION, kind: 'gate', seq: seq++, ...gate })
+    },
+    recordOps(ops): void {
+      write({ v: TRACE_VERSION, kind: 'ops', seq: seq++, ...ops })
     },
     close(): void {
       closeSync(fd)
