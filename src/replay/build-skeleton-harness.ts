@@ -48,6 +48,7 @@ import { createStrategy1Ws } from '../core/strategies/strategy-1-ws.js'
 import { createStrategy2 } from '../core/strategies/strategy-2.js'
 import { createStrategy3a, strategy3aGeometry } from '../core/strategies/strategy-3a.js'
 import { createStrategy4_1a, strategy4_1aTpGeometry } from '../core/strategies/strategy-4-1a.js'
+import { createStrategy4_2a } from '../core/strategies/strategy-4-2a.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -163,6 +164,14 @@ function defaultRegistries(
     // only the per-fill TP re-place (`05` §2/§3).
     return {
       registry: createStrategyRegistry([createStrategy4_1a()]),
+      exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
+    }
+  }
+  if (strategyConfig.id === 's4-2a') {
+    // S4.2a's single limit: `entryPlan` drives the one-rung engine path + engine-side SL + the
+    // `limit_expired` no-fill terminal; the handler owns only the per-fill TP (reused from S4.1a).
+    return {
+      registry: createStrategyRegistry([createStrategy4_2a()]),
       exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
     }
   }

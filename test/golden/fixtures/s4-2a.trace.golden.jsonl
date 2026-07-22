@@ -1,0 +1,13 @@
+{"configHash":"e01018eafb9e04237b4347865a5f9999f582a0a9de35f5e2568b0208efcee473","kind":"header","strategyConfig":{"amountUsd":300,"deadlineSeconds":900,"direction":"negative","entryOffsetSeconds":90,"id":"s4-2a","leverage":1,"limitOffsetMult":0.75,"slMultiplier":1.5,"takeProfitPct":0.2,"thresholdPercent":-0.3},"ts":25200000,"v":1}
+{"event":{"price":60000,"symbol":"BTC","ts":25200000,"type":"MarketTick"},"kind":"event","seq":0,"ts":25200000,"v":1}
+{"event":{"price":3000,"symbol":"ETH","ts":25200000,"type":"MarketTick"},"kind":"event","seq":1,"ts":25200000,"v":1}
+{"event":{"rate":-0.35,"symbol":"BTC","ts":28680000,"type":"FundingPredicted"},"kind":"event","seq":2,"ts":25200000,"v":1}
+{"event":{"rate":0.01,"symbol":"ETH","ts":28680000,"type":"FundingPredicted"},"kind":"event","seq":3,"ts":25200000,"v":1}
+{"event":{"kind":"scan","ts":28680000,"type":"Timer"},"kind":"event","seq":4,"ts":28680000,"v":1}
+{"event":{"kind":"entry","symbol":"BTC","ts":28710000,"type":"Timer"},"kind":"event","seq":5,"ts":28710000,"v":1}
+{"clientOrderId":"BTC-28710000-entry-1","fromState":"SELECTED","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-entry-1","entryQty":0.005,"entrySide":"long","symbol":"BTC","tSettleMs":28800000},"seq":6,"toState":"SUBMITTING_ENTRY","ts":28710000,"v":1}
+{"event":{"clientOrderId":"BTC-28710000-entry-1","status":"OPEN","type":"OrderUpdate"},"kind":"event","seq":7,"ts":28710000,"v":1}
+{"event":{"rate":-0.35,"settleTs":28800000,"symbol":"BTC","type":"FundingSettled"},"kind":"event","seq":8,"ts":28800000,"v":1}
+{"event":{"clientOrderId":"BTC-28710000-entry-1","qty":0,"status":"EXPIRED","type":"OrderUpdate"},"kind":"event","seq":9,"ts":29700000,"v":1}
+{"fromState":"SUBMITTING_ENTRY","intentId":"BTC-28710000","kind":"transition","payload":{"errorCode":"limit_expired","symbol":"BTC"},"seq":10,"toState":"NO_POSITION","ts":29700000,"v":1}
+{"event":{"intentId":"BTC-28710000","kind":"deadline","ts":29700000,"type":"Timer"},"kind":"event","seq":11,"ts":29700000,"v":1}

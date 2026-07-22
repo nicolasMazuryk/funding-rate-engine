@@ -589,6 +589,10 @@ export function createEngine(deps: EngineDeps): Engine {
       payload: {},
       extras: { clientOrderId: firstCoid, entrySide, entryQty: totalQty, tSettleMs: settleTs },
     })
+    // S4.2a (`06` §2 R5): a module with a no-fill terminal code carries `expireAt` on each entry
+    // limit, so the venue expires it at the deadline → `NO_POSITION{limit_expired}`. Absent ⇒ no
+    // `expireAt` (S4.1a byte-unchanged), and the deadline terminal stays engine-timer driven.
+    const entryExpireAt = activeModule.entryExpiryErrorCode !== undefined ? deadlineMs : undefined
     for (const rung of rungs) {
       pendingOrders.set(rung.coid, { intentId, leg: 'entry' })
       void exchange.placeOrder({
@@ -598,6 +602,7 @@ export function createEngine(deps: EngineDeps): Engine {
         qty: rung.qty,
         price: rung.price,
         clientOrderId: rung.coid,
+        expireAt: entryExpireAt,
       })
     }
     // Arm the SL at placement time (before any fill — `05` §2 step 1), and engine-schedule the deadline.
@@ -758,7 +763,8 @@ export function createEngine(deps: EngineDeps): Engine {
       symbol: rec.symbol,
       from: 'SUBMITTING_ENTRY',
       to: 'NO_POSITION',
-      payload: { errorCode: 'ladder_no_fills' },
+      // S4.2a's no-fill terminal is `limit_expired` (`06` §2 R5); every other ladder is `ladder_no_fills`.
+      payload: { errorCode: activeModule.entryExpiryErrorCode ?? 'ladder_no_fills' },
     })
   }
 
@@ -842,7 +848,23 @@ export function createEngine(deps: EngineDeps): Engine {
       event.status === 'EXPIRED'
     ) {
       pendingOrders.delete(event.clientOrderId)
+      // S4.2a (`06` §2 R5): the venue-side `expireAt` fired. A zero-fill entry with no live rung left
+      // is the `limit_expired` no-fill terminal; for the single rung this fires on its own `EXPIRED`.
+      if (event.status === 'EXPIRED') maybeTerminateOnEntryExpiry(intentId, rec)
     }
+  }
+
+  /**
+   * A ladder rung expired unfilled (`06` §2 R5, S4.2a). If the module carries a no-fill terminal
+   * code, the intent is still pre-fill in `SUBMITTING_ENTRY`, and no rung remains live, terminate
+   * `NO_POSITION{entryExpiryErrorCode}`. The deadline timer at the same instant then no-ops (the
+   * intent has left `SUBMITTING_ENTRY`) — idempotent and tie-order safe.
+   */
+  function maybeTerminateOnEntryExpiry(intentId: string, rec: IntentRecord): void {
+    if (activeModule.entryExpiryErrorCode === undefined) return
+    if (rec.state !== 'SUBMITTING_ENTRY' || (rec.filledQty ?? 0) > 0) return
+    const liveRung = rec.ladderRungs?.some((r) => pendingOrders.has(r.coid)) ?? false
+    if (!liveRung) terminateLadderNoFills(intentId, rec)
   }
 
   /** Fold a rung fill into the running fill-weighted `P_avg`, advance to MONITORING on the first fill, re-place the TP. */

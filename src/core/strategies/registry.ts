@@ -12,6 +12,7 @@
 
 import type { StrategyId } from '../../config/canonical.js'
 import type { ExitPolicyKind } from '../intent/exit-policy.js'
+import type { ErrorCode } from '../intent/intent-machine.js'
 import type { Side } from '../ports/exchange-adapter.js'
 import type { FeeInputs } from '../runtime/cost-model.js'
 import type { Candidate } from '../runtime/finder.js'
@@ -54,8 +55,10 @@ export interface RuntimeStrategyConfig {
   readonly ladderTopMult?: number
   /** Bottom-rung offset multiplier on `|F|` (`ladder_bottom_mult`, `05` §2; `> ladderTopMult`). S4.1a only. */
   readonly ladderBottomMult?: number
-  /** TP distance above `P_avg`, percent (`take_profit_pct`, `05` §3). S4.1a only. */
+  /** TP distance above `P_avg`, percent (`take_profit_pct`, `05` §3). S4.1a + S4.2a. */
   readonly takeProfitPct?: number
+  /** Offset multiplier on `|F|` for the single BUY-LIMIT (`limit_offset_mult`, `06` §5). S4.2a only. */
+  readonly limitOffsetMult?: number
   /** Fixed notional per intent, quote currency (`00_globals.md` §4); sized to a qty in the runtime (`00_globals.md` §4). */
   readonly amountUsd: number
   /** Balance-check divisor — required margin is `amountUsd / leverage` (`11` §7). */
@@ -101,6 +104,13 @@ export interface StrategyModule {
    * market entry (every non-ladder strategy is byte-unchanged); present ⇒ the ladder path.
    */
   readonly entryPlan?: LadderEntryPlan
+  /**
+   * No-fill terminal error code for a ladder/single-limit entry (`06` §2 R5, S4.2a). When set, the
+   * engine carries `expireAt` on each entry limit and a zero-fill expiry terminates
+   * `NO_POSITION{this}` instead of `ladder_no_fills`. Absent ⇒ existing behavior (S4.1a
+   * byte-unchanged): entry limits carry no `expireAt` and the no-fill terminal stays `ladder_no_fills`.
+   */
+  readonly entryExpiryErrorCode?: ErrorCode
 }
 
 export type StrategyRegistry = ReadonlyMap<StrategyId, StrategyModule>

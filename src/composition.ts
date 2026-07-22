@@ -32,6 +32,7 @@ import { createStrategy1Ws } from './core/strategies/strategy-1-ws.js'
 import { createStrategy2 } from './core/strategies/strategy-2.js'
 import { createStrategy3a, strategy3aGeometry } from './core/strategies/strategy-3a.js'
 import { createStrategy4_1a, strategy4_1aTpGeometry } from './core/strategies/strategy-4-1a.js'
+import { createStrategy4_2a } from './core/strategies/strategy-4-2a.js'
 
 /** Read a numeric strategy param or fail loud — a missing/non-numeric key is a config bug. */
 function numberParam(params: Readonly<Record<string, number | string>>, key: string): number {
@@ -109,6 +110,18 @@ export function runtimeConfigFromEffective(cfg: EffectiveConfig): RuntimeStrateg
       deadlineSeconds: numberParam(params, 'deadlineSeconds'),
     }
   }
+  // S4.2a is the ladder collapsed to one BUY-LIMIT (`06` §2): no `entrySide` (default long); reads the
+  // single-limit offset + engine-side SL multiplier + per-fill TP + deadline (which also drives the
+  // limit's `expireAt`). The single-limit entry path is switched on by the module's `entryPlan`.
+  if (cfg.strategy === 's4-2a') {
+    return {
+      ...base,
+      limitOffsetMult: numberParam(params, 'limitOffsetMult'),
+      takeProfitPct: numberParam(params, 'takeProfitPct'),
+      slMultiplier: numberParam(params, 'slMultiplier'),
+      deadlineSeconds: numberParam(params, 'deadlineSeconds'),
+    }
+  }
   return { ...base, exitOffsetSeconds: numberParam(params, 'exitOffsetSeconds') }
 }
 
@@ -180,6 +193,21 @@ export function wireS4_1aEngine(deps: S1EngineDeps): Engine {
   return createEngine({
     ...deps,
     registry: createStrategyRegistry([createStrategy4_1a()]),
+    exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
+  })
+}
+
+/**
+ * Wire the engine with the S4.2a single-limit module + the **ladder** `sl_tp_deadline` handler
+ * (task 0340). S4.2a is the S4.1a ladder collapsed to one rung: its `entryPlan` drives the same
+ * engine ladder path (one BUY-LIMIT, engine-side conditional SL armed at placement, per-fill TP),
+ * and its `entryExpiryErrorCode` adds the `limit_expired` no-fill terminal. TP math is identical to
+ * S4.1a, so the handler reuses `strategy4_1aTpGeometry`.
+ */
+export function wireS4_2aEngine(deps: S1EngineDeps): Engine {
+  return createEngine({
+    ...deps,
+    registry: createStrategyRegistry([createStrategy4_2a()]),
     exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
   })
 }
