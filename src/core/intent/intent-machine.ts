@@ -56,36 +56,47 @@ export const TERMINAL_INTENT_STATES: readonly IntentState[] = (
   Object.keys(INTENT_TRANSITIONS) as readonly IntentState[]
 ).filter((state) => INTENT_TRANSITIONS[state].length === 0)
 
-/** `exit_reason` — a position existed and was closed (`00_globals.md` §10.1). */
-export type ExitReason =
-  | 'timed'
-  | 'funding_fee_event'
-  | 'funding_fee_timeout'
-  | 'tp_hit'
-  | 'sl_hit'
-  | 'deadline'
-  | 'kill_switch_flatten'
+/**
+ * `exit_reason` — a position existed and was closed (`00_globals.md` §10.1).
+ * Single-sourced as an `as const` array so the Postgres `exit_reason` pg-enum
+ * (`db/schema.ts`) and the drift guard (`enum-parity.test.ts`) share one list.
+ */
+export const EXIT_REASONS = [
+  'timed',
+  'funding_fee_event',
+  'funding_fee_timeout',
+  'tp_hit',
+  'sl_hit',
+  'deadline',
+  'kill_switch_flatten',
+] as const
+export type ExitReason = (typeof EXIT_REASONS)[number]
 
-/** `error_code` — intent terminated without a managed position (`00_globals.md` §10.2). */
-export type ErrorCode =
+/**
+ * `error_code` — intent terminated without a managed position (`00_globals.md`
+ * §10.2). Single-sourced as an `as const` array (see {@link EXIT_REASONS}).
+ */
+export const ERROR_CODES = [
   // any-strategy / recovery outcomes
-  | 'kill_switch'
-  | 'limit_expired'
-  | 'ladder_no_fills'
+  'kill_switch',
+  'limit_expired',
+  'ladder_no_fills',
   // preflight risk gate + balance/account checks (task 0140, `12` §3 / `13` §1)
-  | 'risk_max_concurrent_intents'
-  | 'risk_max_notional_usd'
-  | 'risk_breaker_open'
-  | 'insufficient_balance'
-  | 'account_setup_incomplete'
+  'risk_max_concurrent_intents',
+  'risk_max_notional_usd',
+  'risk_breaker_open',
+  'insufficient_balance',
+  'account_setup_incomplete',
   // S6 entry state machine (`07_strategy_6.md` §3)
-  | 'pre_funding_order_failed'
-  | 'pre_funding_order_rejected'
-  | 'pre_funding_not_filled'
-  | 'funding_event_timeout'
-  | 'main_order_failed'
-  | 'main_order_rejected'
-  | 'close_pre_funding_failed'
+  'pre_funding_order_failed',
+  'pre_funding_order_rejected',
+  'pre_funding_not_filled',
+  'funding_event_timeout',
+  'main_order_failed',
+  'main_order_rejected',
+  'close_pre_funding_failed',
+] as const
+export type ErrorCode = (typeof ERROR_CODES)[number]
 
 /** Terminal states reached with a position closed. */
 export type ExitReasonState = 'CLOSED'

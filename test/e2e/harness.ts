@@ -21,6 +21,7 @@ import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool } from 'pg'
 import { DEV_INSTANCE } from '../../src/persistence/db/instance.js'
 import { createPgRepo } from '../../src/persistence/db/repo.js'
+import { createPersistenceProjector, type PersistenceProjector } from '../../src/persistence/projector.js'
 import { createForwarder, type Forwarder } from '../../src/persistence/wal/forwarder.js'
 import type { WalRecord } from '../../src/persistence/wal/wal-file.js'
 import { type BuildOpts, buildSkeletonEngine, type SkeletonHarness } from '../../src/replay/build-skeleton-harness.js'
@@ -38,6 +39,8 @@ export interface WalDbRow {
 export interface BootedInstance {
   readonly harness: SkeletonHarness
   readonly forwarder: Forwarder
+  /** The bus → Postgres derived-fact projector (orders/fills/positions/funding; 0360). */
+  readonly projector: PersistenceProjector
   /** The current-state `intents` row for `intentId` (`SELECT *`), or `undefined`. */
   intentRow(intentId: string): Promise<Record<string, unknown> | undefined>
   /** The forwarded `intent_wal` transition rows for `intentId`, in `seq` order. */
@@ -66,6 +69,7 @@ export async function createE2eContext(): Promise<E2eContext> {
   const adminPool = new Pool({ connectionString: DATABASE_URL })
   const openPools: Pool[] = []
   const harnesses: SkeletonHarness[] = []
+  const projectors: PersistenceProjector[] = []
   let tmp: TempDir | undefined
 
   function newPool(max = 1): Pool {
@@ -75,6 +79,7 @@ export async function createE2eContext(): Promise<E2eContext> {
   }
 
   async function disposeInstances(): Promise<void> {
+    for (const p of projectors.splice(0)) p.stop()
     for (const h of harnesses.splice(0)) {
       h.engine.dispose()
       h.wal.close()
@@ -87,7 +92,9 @@ export async function createE2eContext(): Promise<E2eContext> {
     async reset(): Promise<string> {
       await disposeInstances()
       tmp?.dispose()
-      await adminPool.query('TRUNCATE intents, intent_wal')
+      await adminPool.query(
+        'TRUNCATE intents, intent_wal, orders, fills, positions, funding_events, kill_switch, tracker_snapshots',
+      )
       tmp = tempDir('skeleton-e2e-')
       return tmp.walPath
     },
@@ -98,9 +105,12 @@ export async function createE2eContext(): Promise<E2eContext> {
       const harness = buildSkeletonEngine({ ...opts, walPath, repo })
       harnesses.push(harness)
       const forwarder = createForwarder({ wal: harness.wal, pool: newPool(), instance: DEV_INSTANCE })
+      const projector = createPersistenceProjector({ bus: harness.bus, repo, now: () => harness.clock.now() })
+      projectors.push(projector)
       return {
         harness,
         forwarder,
+        projector,
         async intentRow(intentId): Promise<Record<string, unknown> | undefined> {
           const { rows } = await adminPool.query('SELECT * FROM intents WHERE intent_id = $1', [intentId])
           return rows[0]

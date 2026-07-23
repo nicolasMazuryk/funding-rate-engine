@@ -10,13 +10,34 @@ import { and, notInArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { TERMINAL_INTENT_STATES } from '../../core/intent/intent-machine.js'
-import type { IntentSnapshot, Repo } from '../../core/ports/index.js'
+import type {
+  FillRecord,
+  FundingEventRecord,
+  IntentSnapshot,
+  KillSwitchRecord,
+  OrderDescriptor,
+  OrderStatusUpdate,
+  PositionRecord,
+  Repo,
+  TrackerSnapshotRecord,
+} from '../../core/ports/index.js'
 import type { Instance } from './instance.js'
-import { instanceWhere, intents } from './schema.js'
+import {
+  fills,
+  fundingEvents,
+  instanceWhere,
+  intents,
+  killSwitch,
+  orders,
+  positions,
+  trackerSnapshots,
+} from './schema.js'
 
 /** Build a `Repo` backed by `pool`, scoped to `instance`. */
 export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly instance: Instance }): Repo {
   const db = drizzle(pool)
+  /** The instance triple every row carries (`14` §3). */
+  const triple = { exchange: instance.exchange, strategy: instance.strategy, subaccount: instance.subaccount }
 
   return {
     async upsertIntentState(snapshot: IntentSnapshot): Promise<void> {
@@ -63,5 +84,127 @@ export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly
         configHash: r.configHash ?? undefined,
       }))
     },
+
+    async upsertOrderStatus(update: OrderStatusUpdate): Promise<void> {
+      await db
+        .insert(orders)
+        .values({ ...triple, clientOrderId: update.clientOrderId, status: update.status, ...descriptorCols(update) })
+        .onConflictDoUpdate({
+          target: [orders.exchange, orders.strategy, orders.subaccount, orders.clientOrderId],
+          set: { status: update.status, ...descriptorCols(update) },
+        })
+    },
+
+    async insertFill(fill: FillRecord): Promise<void> {
+      await db
+        .insert(fills)
+        .values({
+          ...triple,
+          clientOrderId: fill.clientOrderId,
+          px: fill.px,
+          qty: fill.qty,
+          ts: fill.ts,
+          feeClass: fill.feeClass ?? null,
+        })
+        .onConflictDoNothing({
+          target: [fills.exchange, fills.strategy, fills.subaccount, fills.clientOrderId, fills.ts, fills.qty],
+        })
+    },
+
+    async upsertOrder(order: OrderDescriptor): Promise<void> {
+      const cols = {
+        symbol: order.symbol,
+        side: order.side,
+        type: order.type,
+        qty: order.qty,
+        price: order.price ?? null,
+        reduceOnly: order.reduceOnly ?? null,
+        venueOrderId: order.venueOrderId ?? null,
+      }
+      await db
+        .insert(orders)
+        .values({ ...triple, clientOrderId: order.clientOrderId, status: order.status ?? 'NEW', ...cols })
+        .onConflictDoUpdate({
+          target: [orders.exchange, orders.strategy, orders.subaccount, orders.clientOrderId],
+          set: cols,
+        })
+    },
+
+    async upsertPosition(position: PositionRecord): Promise<void> {
+      const cols = {
+        side: position.side,
+        qty: position.qty,
+        entryPrice: position.entryPrice ?? null,
+        updatedTs: position.updatedTs,
+      }
+      await db
+        .insert(positions)
+        .values({ ...triple, symbol: position.symbol, ...cols })
+        .onConflictDoUpdate({
+          target: [positions.exchange, positions.strategy, positions.subaccount, positions.symbol],
+          set: cols,
+        })
+    },
+
+    async upsertFundingEvent(event: FundingEventRecord): Promise<void> {
+      await db
+        .insert(fundingEvents)
+        .values({
+          ...triple,
+          symbol: event.symbol,
+          fundingTime: event.fundingTime,
+          amount: event.amount,
+          rate: event.rate ?? null,
+        })
+        .onConflictDoNothing({
+          target: [
+            fundingEvents.exchange,
+            fundingEvents.strategy,
+            fundingEvents.subaccount,
+            fundingEvents.symbol,
+            fundingEvents.fundingTime,
+          ],
+        })
+    },
+
+    async upsertKillSwitch(record: KillSwitchRecord): Promise<void> {
+      const cols = { state: record.state, reason: record.reason ?? null, updatedTs: record.updatedTs }
+      await db
+        .insert(killSwitch)
+        .values({ ...triple, ...cols })
+        .onConflictDoUpdate({
+          target: [killSwitch.exchange, killSwitch.strategy, killSwitch.subaccount],
+          set: cols,
+        })
+    },
+
+    async upsertTrackerSnapshot(snapshot: TrackerSnapshotRecord): Promise<void> {
+      const cols = { snapshot: snapshot.snapshot, updatedTs: snapshot.updatedTs }
+      await db
+        .insert(trackerSnapshots)
+        .values({ ...triple, intentId: snapshot.intentId, ...cols })
+        .onConflictDoUpdate({
+          target: [
+            trackerSnapshots.exchange,
+            trackerSnapshots.strategy,
+            trackerSnapshots.subaccount,
+            trackerSnapshots.intentId,
+          ],
+          set: cols,
+        })
+    },
+
+    async loadTrackerSnapshots(): Promise<readonly TrackerSnapshotRecord[]> {
+      const rows = await db.select().from(trackerSnapshots).where(instanceWhere(trackerSnapshots, instance))
+      return rows.map((r) => ({ intentId: r.intentId, snapshot: r.snapshot, updatedTs: r.updatedTs }))
+    },
   }
+}
+
+/** Descriptor cols an `OrderStatusUpdate` can carry (only `filledQty`/`venueOrderId` today). */
+function descriptorCols(update: OrderStatusUpdate): { filledQty?: number; venueOrderId?: string } {
+  const cols: { filledQty?: number; venueOrderId?: string } = {}
+  if (update.filledQty !== undefined) cols.filledQty = update.filledQty
+  if (update.venueOrderId !== undefined) cols.venueOrderId = update.venueOrderId
+  return cols
 }

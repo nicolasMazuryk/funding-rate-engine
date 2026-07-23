@@ -26,6 +26,18 @@ export type {
   Side,
   TimeRange,
 } from './exchange-adapter.js'
-export type { IntentId, IntentSnapshot, IntentState, Repo } from './repo.js'
+export type {
+  FillRecord,
+  FundingEventRecord,
+  IntentId,
+  IntentSnapshot,
+  IntentState,
+  KillSwitchRecord,
+  OrderDescriptor,
+  OrderStatusUpdate,
+  PositionRecord,
+  Repo,
+  TrackerSnapshotRecord,
+} from './repo.js'
 export type { RiskDecision, RiskGate, RiskIntent } from './risk-gate.js'
 export type { TransitionLog, TransitionLogEntry } from './transition-log.js'

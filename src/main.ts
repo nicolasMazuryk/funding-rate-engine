@@ -40,6 +40,7 @@ import type { ExchangeAdapter, TimeRange } from './core/ports/exchange-adapter.j
 import { createScheduler } from './core/runtime/scheduler.js'
 import type { Instance } from './persistence/db/instance.js'
 import { createPgRepo } from './persistence/db/repo.js'
+import { createPersistenceProjector } from './persistence/projector.js'
 import { createWalFile } from './persistence/wal/wal-file.js'
 import { createLogger } from './replay/logger.js'
 import { createRiskGate } from './risk/gate.js'
@@ -128,6 +129,13 @@ async function run(): Promise<void> {
                 ? wireS1WsEngine(engineDeps, gateDeps)
                 : wireS1Engine(engineDeps)
 
+  // Derived-fact persistence: mirror bus facts (orders/fills/positions/funding) into
+  // Postgres off the hot path (`14` §3, 0360); persist each kill-switch flip too.
+  const projector = createPersistenceProjector({ bus, repo, now: clock.now })
+  const unsubKillSwitch = killSwitch.subscribe(
+    (state) => void repo.upsertKillSwitch?.({ state, updatedTs: clock.now() }).catch(() => {}),
+  )
+
   scheduler.start()
   logger.info('instance running')
 
@@ -138,6 +146,8 @@ async function run(): Promise<void> {
     shuttingDown = true
     logger.info({ signal }, 'shutting down')
     scheduler.stop()
+    unsubKillSwitch()
+    projector.stop()
     engine.dispose()
     await adapter.close().catch(() => {})
     wal.close()
