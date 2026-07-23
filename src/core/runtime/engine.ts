@@ -44,7 +44,7 @@ import { makeClientOrderId } from '../order-id/client-order-id.js'
 import type { EventBus, Unsubscribe } from '../ports/bus.js'
 import type { Clock } from '../ports/clock.js'
 import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-adapter.js'
-import type { Repo } from '../ports/repo.js'
+import type { Repo, TrackerSnapshotRecord } from '../ports/repo.js'
 import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
 import { capReduceOnlyQty, computeQty, minFeasibleQty, roundPrice, splitLadder } from '../sizing/sizing.js'
@@ -97,6 +97,13 @@ export interface EngineDeps {
    * absent ⇒ the engine emits nothing.
    */
   readonly onOpsEvent?: (event: OpsEvent) => void
+  /**
+   * Config revision hash (`09` §7) stamped onto every persisted intent (`IntentSnapshot.configHash`)
+   * — the fail-loud boot check (0370 `recovery.ts`) compares a recovered intent's stored hash
+   * against the *current* boot's before touching the venue. Absent ⇒ `configHash` stays
+   * unset (pre-0370 callers/tests untouched).
+   */
+  readonly configHash?: string
 }
 
 /** A diagnostic engine ops event surfaced via {@link EngineDeps.onOpsEvent} (`05` §2 step 2, `07` §3). */
@@ -130,6 +137,14 @@ export interface IntentWalFields {
   readonly fundingReceived?: boolean
   /** Settled funding rate at MAIN fill, signed percent — S6's TP/SL `|F|` source (`07` §2 step 4). Absent for other strategies. */
   readonly settledRatePercent?: number
+  /**
+   * The exit reason a `MONITORING → EXITING` transition was fired for (`fireExit`), carried
+   * ahead of the terminal `CLOSED{exitReason}` payload so a crash mid-flight still recovers
+   * *why* the exit leg was placed (`14` §5 full matrix, 0370) — without it a recovered
+   * `EXITING` intent has no legal value to close with (R12 requires one). Absent on every
+   * other transition (JSON drops `undefined`; earlier goldens byte-unchanged).
+   */
+  readonly exitReason?: ExitReason
 }
 
 /**
@@ -160,8 +175,13 @@ export interface ReconciliationRecord {
 }
 
 export interface Engine {
-  /** Rebuild in-memory state from recovered intents and re-drive them (call before advancing the clock). */
-  recover(recovered: readonly RecoveredIntent[]): Promise<void>
+  /**
+   * Rebuild in-memory state from recovered intents and re-drive them (call before advancing
+   * the clock). `snapshots` are the durable `tracker_snapshots` rows (0370 `recovery.ts`
+   * step 3); a handler that owns snapshot restore (S2's retracement tracker) is fed the ones
+   * matching its live records before any per-intent re-arm.
+   */
+  recover(recovered: readonly RecoveredIntent[], snapshots?: readonly TrackerSnapshotRecord[]): Promise<void>
   /** Current FSM state of an intent, or `undefined` if unknown to this engine. */
   intentState(intentId: string): IntentState | undefined
   /** Advisory cost-model breakdown captured at selection (task 0150), or `undefined` if none. */
@@ -256,6 +276,8 @@ export function recoveredFromWal(records: readonly TransitionLogEntry[]): readon
       tDeadlineMs: payload.tDeadlineMs,
       tSettleMs: payload.tSettleMs,
       fundingReceived: payload.fundingReceived,
+      settledRatePercent: payload.settledRatePercent,
+      exitReason: payload.exitReason,
     })
   }
   return recovered
@@ -454,6 +476,47 @@ export function createEngine(deps: EngineDeps): Engine {
     return count
   }
 
+  /** ≤ 1 tracker-snapshot write per second per intent — mirrors S2's TP re-place throttle (`03` §5). */
+  const SNAPSHOT_THROTTLE_MS = 1000
+  const lastSnapshotWriteMs = new Map<string, number>()
+
+  /**
+   * The one exit-policy kind with deep crash-recovery snapshot support (S2's retracement
+   * tracker, 0370 decision #2) — feature-detected since {@link ExitPolicyHandler} stays
+   * generic (`RetracementHandler` adds `serialize`/`restore` beyond the base interface).
+   * S3a/S4/S6's static-OCO handlers have neither, so they fall back to a blind re-arm on
+   * recovery (SUGGESTIONS: their deep snapshot support is deferred).
+   */
+  interface SnapshotCapableHandler extends ExitPolicyHandler {
+    serialize(): ReadonlyArray<{ readonly intentId: string }>
+    restore(snapshots: readonly unknown[]): void
+  }
+  function isSnapshotCapable(h: ExitPolicyHandler): h is SnapshotCapableHandler {
+    const maybe = h as Partial<SnapshotCapableHandler>
+    return typeof maybe.serialize === 'function' && typeof maybe.restore === 'function'
+  }
+
+  /**
+   * Durably persist `intentId`'s tracker snapshot (`tracker_snapshots`, `14` §7) — the
+   * `repo.upsertTrackerSnapshot` write recovery's `loadTrackerSnapshots` reads back. No-op
+   * when the active handler carries no deep snapshot, the repo omits the optional writer
+   * (in-memory test repo), or (absent `force`) the last write was under {@link
+   * SNAPSHOT_THROTTLE_MS} ago.
+   */
+  function maybeWriteTrackerSnapshot(intentId: string, force = false): void {
+    if (repo.upsertTrackerSnapshot === undefined) return
+    if (!isSnapshotCapable(exitHandler)) return
+    const now = clock.now()
+    if (!force) {
+      const last = lastSnapshotWriteMs.get(intentId)
+      if (last !== undefined && now - last < SNAPSHOT_THROTTLE_MS) return
+    }
+    const snapshot = exitHandler.serialize().find((s) => s.intentId === intentId)
+    if (snapshot === undefined) return // the intent already closed / the handler dropped it
+    lastSnapshotWriteMs.set(intentId, now)
+    void repo.upsertTrackerSnapshot({ intentId, snapshot, updatedTs: now })
+  }
+
   /**
    * Validate and record one transition, then durably WAL it before the side
    * effect it gates. Order matters: `wal.append` is fsync-durable by the time it
@@ -490,6 +553,7 @@ export function createEngine(deps: EngineDeps): Engine {
       symbol,
       exitReason: payload.exitReason,
       errorCode: payload.errorCode,
+      configHash: deps.configHash,
     })
     const rec = intents.get(intentId)
     if (rec) rec.state = to
@@ -826,7 +890,18 @@ export function createEngine(deps: EngineDeps): Engine {
     rec.exitReason = exitReason
     // Disarm any engine-side stop the moment we exit, so a raced later tick can't re-fire it.
     conditionalStops.delete(intentId)
-    commit({ intentId, symbol: rec.symbol, from: 'MONITORING', to: 'EXITING', payload: {}, extras: { clientOrderId } })
+    // `exitReason` rides on `EXITING` too (not just the terminal `CLOSED` payload) so a crash
+    // between the exit-leg WAL append and its fill still recovers *why* the leg was placed
+    // (`14` §5 full matrix, 0370) — otherwise a recovered `EXITING` intent has no legal
+    // `exitReason` to close with (R12).
+    commit({
+      intentId,
+      symbol: rec.symbol,
+      from: 'MONITORING',
+      to: 'EXITING',
+      payload: {},
+      extras: { clientOrderId, exitReason },
+    })
     pendingOrders.set(clientOrderId, { intentId, leg: 'exit' })
     void exchange.placeOrder({
       symbol: rec.symbol,
@@ -902,6 +977,7 @@ export function createEngine(deps: EngineDeps): Engine {
       if (rec.state !== 'MONITORING') continue
       const decision = exitHandler.onEvent(event, toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
       if (decision !== undefined) fireExit(intentId, rec, decision.exitReason)
+      else maybeWriteTrackerSnapshot(intentId) // throttled — mirrors the S2 TP re-place cadence
     }
   }
 
@@ -979,6 +1055,9 @@ export function createEngine(deps: EngineDeps): Engine {
         settledRatePercent: rec.settledRatePercent,
       },
     })
+    // Force-write so a durable snapshot exists the instant the resting legs do — a crash
+    // right after this commit must not recover into the "no snapshot" fallback (`14` §7).
+    maybeWriteTrackerSnapshot(intentId, true)
   }
 
   function onEntryOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
@@ -1227,7 +1306,28 @@ export function createEngine(deps: EngineDeps): Engine {
     })
   }
 
-  async function recoverMonitoring(r: RecoveredIntent): Promise<void> {
+  /**
+   * A recovered `SELECTED` intent: no order has ever been placed, so nothing WALs it there —
+   * `onEntry`/`onEntryLadder`/`onEntrySubMachine` run `intents.set` synchronously through to
+   * the first `commit()` (`SELECTED → SUBMITTING_ENTRY`/`ABORTED`) with no `await` between,
+   * so this state never actually reaches the WAL/repo in the live engine (`14` §5 full
+   * matrix, 0370 — proven by the crash matrix finding no WAL row for this point). Defensive
+   * only: if a future producer ever WALs a bare `SELECTED`, there is no safe re-decision post
+   * crash (the entry window may already have passed) — leave it inert; the next scan
+   * re-evaluates the symbol fresh.
+   */
+  async function recoverSelected(r: RecoveredIntent): Promise<void> {
+    intents.set(r.intentId, {
+      symbol: r.symbol,
+      state: 'SELECTED',
+      entrySide: r.entrySide ?? entrySide,
+      entryQty: r.entryQty ?? 0,
+      settleTs: r.tSettleMs,
+    })
+    return Promise.resolve()
+  }
+
+  async function recoverMonitoring(r: RecoveredIntent, snapshot: TrackerSnapshotRecord | undefined): Promise<void> {
     const rec: IntentRecord = {
       symbol: r.symbol,
       state: 'MONITORING',
@@ -1236,24 +1336,103 @@ export function createEngine(deps: EngineDeps): Engine {
       entryFillPx: r.entryFillPx,
       settleTs: r.tSettleMs,
       fundingReceived: r.fundingReceived,
+      settledRatePercent: r.settledRatePercent,
       deadlineMs: r.tDeadlineMs,
     }
     intents.set(r.intentId, rec)
     // Reconcile qty against venue ground truth — do NOT replace the live order.
     const positions = await exchange.getPositions()
     rec.entryFillQty = positions.find((p) => p.symbol === r.symbol)?.qty ?? r.entryQty
-    // Re-arm through the handler: passing the recovered `deadlineMs` makes the timed
-    // policy schedule at the recovered instant, not `now + holdMs`.
-    if (r.tDeadlineMs !== undefined) exitHandler.arm(toMonitoredIntent(r.intentId, rec), strategyConfig, exitCtx)
+
+    // Deep-restored handler (S2, decision #2): its per-intent tracker/legs were already
+    // rehydrated by the one `handler.restore()` call in `recover()` below — re-arming would
+    // replace the resting legs under a reset attempt counter and desync the rotating TP
+    // (`03` §3). Only the engine-owned deadline timer needs re-scheduling here.
+    if (snapshot !== undefined && isSnapshotCapable(exitHandler)) {
+      if (r.tDeadlineMs !== undefined) scheduler.scheduleDeadlineTimer(r.intentId, r.tDeadlineMs)
+      return
+    }
+    // Missing-snapshot fallback (decision #2): a snapshot-capable handler with nothing
+    // persisted yet (crash before the first forward, or PG behind) restarts its tracker from
+    // the current price — conservative, the position stays guarded by whatever resting SL/TP
+    // survive on the venue. `anchorPrice` never rides the WAL (no goldens churn), so it is
+    // synthesized here: latest observed tick, falling back to the recovered entry fill.
+    rec.anchorPrice = latestPrice.get(r.symbol) ?? r.entryFillPx
+    // Blind re-arm: every other handler (`timed`, `funding_fee_event`, the static
+    // `sl_tp_deadline` OCO) recomputes its resting legs at DETERMINISTIC `(leg, attempt)`
+    // client order ids — idempotent by construction, the same guarantee `recoverSubmitting`
+    // relies on (`11` §4). The ladder `sl_tp_deadline` variant's `arm()` is a no-op (its TP
+    // lives on `onEntryFill`, never called here — the existing resting TP survives on the
+    // venue untouched) and does not itself schedule the deadline, so the engine always also
+    // schedules it directly; a handler that also schedules it produces a harmless duplicate
+    // `deadline` Timer — `dispatchToExitPolicy` guards on `state === 'MONITORING'`, so the
+    // second delivery (after the first already fired the exit) no-ops.
+    if (r.tDeadlineMs !== undefined) {
+      exitHandler.arm(toMonitoredIntent(r.intentId, rec), strategyConfig, exitCtx)
+      scheduler.scheduleDeadlineTimer(r.intentId, r.tDeadlineMs)
+    }
+  }
+
+  /**
+   * A recovered `EXITING` intent: the reduce-only exit leg was placed but its fill (or the
+   * `→ CLOSED` WAL append) never landed. `r.exitReason` rides the `EXITING` transition
+   * (`fireExit`) precisely so this has a legal value to close with (R12) — absent only for a
+   * pre-0370 WAL, where `deadline` is the fail-safe default (every deadline-driven exit is a
+   * `requestExit('deadline')`/`confirmClose` call, so it is the least-wrong guess).
+   */
+  async function recoverExiting(r: RecoveredIntent): Promise<void> {
+    const exitReason: ExitReason = r.exitReason ?? 'deadline'
+    const rec: IntentRecord = {
+      symbol: r.symbol,
+      state: 'EXITING',
+      entrySide: r.entrySide ?? entrySide,
+      entryQty: r.entryQty ?? 0,
+      entryFillPx: r.entryFillPx,
+      settleTs: r.tSettleMs,
+      fundingReceived: r.fundingReceived,
+      exitReason,
+    }
+    intents.set(r.intentId, rec)
+    const clientOrderId = r.clientOrderId ?? makeClientOrderId({ intentId: r.intentId, leg: 'exit', attempt: 1 })
+
+    let order: Order | undefined
+    try {
+      order = await exchange.getOrder(clientOrderId)
+    } catch {
+      order = undefined // WAL has the order but the venue never saw it (`14` §5 step 4) — re-issue.
+    }
+    if (order?.status === 'FILLED') {
+      closeFromExiting(r.intentId, rec, exitReason) // already on venue — adopt, no re-submit.
+      return
+    }
+    // Re-issue with the SAME clientOrderId — idempotent by construction, no duplicate. Size
+    // off venue ground truth (not the WAL's `entryQty`, which the EXITING transition never
+    // carries): whatever qty is still open is exactly what the reduce-only leg must close.
+    const positions = await exchange.getPositions()
+    const qty = positions.find((p) => p.symbol === r.symbol)?.qty ?? rec.entryQty
+    pendingOrders.set(clientOrderId, { intentId: r.intentId, leg: 'exit' })
+    void exchange.placeOrder({ symbol: r.symbol, side: exitSide, type: 'market', qty, clientOrderId, reduceOnly: true })
   }
 
   const unsubscribe: Unsubscribe = bus.subscribe(dispatch)
 
   return {
-    async recover(recovered: readonly RecoveredIntent[]): Promise<void> {
+    async recover(
+      recovered: readonly RecoveredIntent[],
+      snapshots: readonly TrackerSnapshotRecord[] = [],
+    ): Promise<void> {
+      // Deep-restore the snapshot-capable handler's live per-intent state ONCE, up front, for
+      // every persisted snapshot — `recoverMonitoring` below only (re-)schedules the deadline
+      // for the intents it actually reaches.
+      if (snapshots.length > 0 && isSnapshotCapable(exitHandler)) {
+        exitHandler.restore(snapshots.map((s) => s.snapshot))
+      }
+      const snapshotByIntent = new Map(snapshots.map((s) => [s.intentId, s]))
       for (const r of recovered) {
-        if (r.state === 'SUBMITTING_ENTRY') await recoverSubmitting(r)
-        else if (r.state === 'MONITORING') await recoverMonitoring(r)
+        if (r.state === 'SELECTED') await recoverSelected(r)
+        else if (r.state === 'SUBMITTING_ENTRY') await recoverSubmitting(r)
+        else if (r.state === 'MONITORING') await recoverMonitoring(r, snapshotByIntent.get(r.intentId))
+        else if (r.state === 'EXITING') await recoverExiting(r)
       }
     },
     intentState(intentId: string): IntentState | undefined {

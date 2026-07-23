@@ -9,6 +9,7 @@ import type { SimExchange } from '../../src/adapters/sim/sim-exchange.js'
 import type { OrderAck, OrderRequest } from '../../src/core/ports/exchange-adapter.js'
 
 const isEntryLeg = (req: OrderRequest): boolean => req.clientOrderId.includes('-entry-')
+const isExitLeg = (req: OrderRequest): boolean => req.clientOrderId.includes('-exit-')
 
 export interface EntryOrderSpy {
   /** The wrapped exchange to hand the engine. */
@@ -36,6 +37,17 @@ export function hangEntryOrders(sim: SimExchange): SimExchange {
     ...sim,
     placeOrder(req: OrderRequest): Promise<OrderAck> {
       if (isEntryLeg(req)) return new Promise<OrderAck>(() => {})
+      return sim.placeOrder(req)
+    },
+  }
+}
+
+/** Wrap `sim` so exit-leg orders hang forever (the venue never sees them) — the `EXITING` crash point. */
+export function hangExitOrders(sim: SimExchange): SimExchange {
+  return {
+    ...sim,
+    placeOrder(req: OrderRequest): Promise<OrderAck> {
+      if (isExitLeg(req)) return new Promise<OrderAck>(() => {})
       return sim.placeOrder(req)
     },
   }

@@ -178,6 +178,12 @@ export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly
         })
     },
 
+    async loadKillSwitch(): Promise<KillSwitchRecord | undefined> {
+      const [row] = await db.select().from(killSwitch).where(instanceWhere(killSwitch, instance)).limit(1)
+      if (row === undefined) return undefined
+      return { state: row.state, reason: row.reason ?? undefined, updatedTs: row.updatedTs }
+    },
+
     async upsertTrackerSnapshot(snapshot: TrackerSnapshotRecord): Promise<void> {
       const cols = { snapshot: snapshot.snapshot, updatedTs: snapshot.updatedTs }
       await db

@@ -135,6 +135,8 @@ export interface Repo {
   upsertFundingEvent?(event: FundingEventRecord): Promise<void>
   /** Upsert the instance's single kill-switch row. */
   upsertKillSwitch?(record: KillSwitchRecord): Promise<void>
+  /** Load the instance's single kill-switch row, or `undefined` if never written (`14` §5 step 5). */
+  loadKillSwitch?(): Promise<KillSwitchRecord | undefined>
   /** Upsert an S2 tracker snapshot by `intentId`. */
   upsertTrackerSnapshot?(snapshot: TrackerSnapshotRecord): Promise<void>
   /** Load all tracker snapshots for the instance (consumed by 0370 respawn). */

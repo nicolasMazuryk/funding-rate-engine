@@ -11,7 +11,7 @@
 {"event":{"qty":0.001,"side":"long","symbol":"BTC","type":"PositionUpdate"},"kind":"event","seq":9,"ts":28710000,"v":1}
 {"event":{"rate":-0.4,"settleTs":28804000,"symbol":"BTC","type":"FundingSettled"},"kind":"event","seq":10,"ts":28800000,"v":1}
 {"event":{"amount":0.24,"fundingTime":28804000,"symbol":"BTC","type":"FundingFeeAccrued"},"kind":"event","seq":11,"ts":28800000,"v":1}
-{"clientOrderId":"BTC-28710000-exit-1","fromState":"MONITORING","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-exit-1","symbol":"BTC"},"seq":12,"toState":"EXITING","ts":28800000,"v":1}
+{"clientOrderId":"BTC-28710000-exit-1","fromState":"MONITORING","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-exit-1","exitReason":"funding_fee_event","symbol":"BTC"},"seq":12,"toState":"EXITING","ts":28800000,"v":1}
 {"event":{"clientOrderId":"BTC-28710000-exit-1","fillPx":60000,"qty":0.001,"status":"FILLED","type":"OrderUpdate"},"kind":"event","seq":13,"ts":28800000,"v":1}
 {"fromState":"EXITING","intentId":"BTC-28710000","kind":"transition","payload":{"exitReason":"funding_fee_event","symbol":"BTC"},"seq":14,"toState":"CLOSED","ts":28800000,"v":1}
 {"event":{"qty":0,"side":"short","symbol":"BTC","type":"PositionUpdate"},"kind":"event","seq":15,"ts":28800000,"v":1}

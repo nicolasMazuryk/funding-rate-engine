@@ -12,6 +12,13 @@
  * watermark is a fast-path skip, not a correctness dependency — on start it is
  * re-derived from `MAX(seq)` in `intent_wal` for this instance (simpler than a
  * sidecar file), so a restart re-sends nothing already shipped.
+ *
+ * Robustness (0370): each tick ships at most {@link DEFAULT_BATCH_SIZE} rows,
+ * looping within the tick until the backlog is drained rather than growing one
+ * unbounded `INSERT` — a long outage's catch-up stays a bounded statement, not a
+ * single giant one. A failed tick backs off the *next* tick's delay exponentially
+ * (capped), resetting to {@link DEFAULT_INTERVAL_MS} on the next success, so a
+ * sustained PG outage does not retry every 200 ms forever.
  */
 
 import { max } from 'drizzle-orm'
@@ -23,6 +30,10 @@ import type { WalFile } from './wal-file.js'
 
 /** Default forwarder tick interval (`14` §2.1: "every 200 ms or N entries"). */
 const DEFAULT_INTERVAL_MS = 200
+/** Max rows shipped per `INSERT` — a tick loops over batches until the backlog drains. */
+const DEFAULT_BATCH_SIZE = 500
+/** Backoff ceiling on repeated PG failure (`14` §2.1: keep retrying, never storm the DB). */
+const MAX_BACKOFF_MS = 30_000
 
 export interface Forwarder {
   /** Begin the background tick loop. Idempotent. */
@@ -39,11 +50,14 @@ export function createForwarder({
   pool,
   instance,
   intervalMs = DEFAULT_INTERVAL_MS,
+  batchSize = DEFAULT_BATCH_SIZE,
 }: {
   readonly wal: WalFile
   readonly pool: Pool
   readonly instance: Instance
   readonly intervalMs?: number
+  /** Max rows shipped per `INSERT`; a tick loops over batches until the backlog drains. */
+  readonly batchSize?: number
 }): Forwarder {
   const db = drizzle(pool)
   const instanceScope = instanceWhere(intentWal, instance)
@@ -52,20 +66,19 @@ export function createForwarder({
   // (`14` §2.1); -1 means "nothing shipped yet".
   let watermark = -1
   let derived = false
-  let timer: ReturnType<typeof setInterval> | undefined
+  let timer: ReturnType<typeof setTimeout> | undefined
   let inFlight = false
+  let stopped = true
+  // Current retry delay — resets to `intervalMs` on success, grows (capped) on failure.
+  let currentDelayMs = intervalMs
 
-  async function forwardOnce(): Promise<void> {
-    if (!derived) {
-      const [row] = await db
-        .select({ m: max(intentWal.seq) })
-        .from(intentWal)
-        .where(instanceScope)
-      watermark = row?.m ?? -1
-      derived = true
-    }
-    const pending = wal.readAll().filter((record) => record.seq > watermark)
-    if (pending.length === 0) return
+  /** Ship one bounded batch past the watermark; returns the number of rows shipped. */
+  async function forwardBatch(): Promise<number> {
+    const pending = wal
+      .readAll()
+      .filter((record) => record.seq > watermark)
+      .slice(0, batchSize)
+    if (pending.length === 0) return 0
 
     const values = pending.map((record) => ({
       seq: record.seq,
@@ -87,6 +100,23 @@ export function createForwarder({
       })
     // Advance only after a successful commit (`14` §2.1: watermark unchanged on error).
     watermark = Math.max(...pending.map((record) => record.seq))
+    return pending.length
+  }
+
+  /** Ship the full current backlog, one bounded batch at a time (idempotent catch-up after any downtime). */
+  async function forwardOnce(): Promise<void> {
+    if (!derived) {
+      const [row] = await db
+        .select({ m: max(intentWal.seq) })
+        .from(intentWal)
+        .where(instanceScope)
+      watermark = row?.m ?? -1
+      derived = true
+    }
+    // Loop within the tick so a long backlog drains in one pass rather than one batch/200ms.
+    while ((await forwardBatch()) === batchSize) {
+      // keep draining
+    }
   }
 
   async function tick(): Promise<void> {
@@ -94,24 +124,35 @@ export function createForwarder({
     inFlight = true
     try {
       await forwardOnce()
+      currentDelayMs = intervalMs // success — reset the backoff
     } catch (err) {
-      // Never throw into the hot path: warn, keep the watermark, retry next tick.
+      // Never throw into the hot path: warn, keep the watermark, back off the next tick.
       console.warn(`[forwarder] deferring — Postgres unreachable: ${(err as Error).message}`)
+      currentDelayMs = Math.min(currentDelayMs * 2, MAX_BACKOFF_MS)
     } finally {
       inFlight = false
     }
   }
 
+  function scheduleNext(): void {
+    if (stopped) return
+    timer = setTimeout(() => {
+      void tick().finally(scheduleNext)
+    }, currentDelayMs)
+    // Do not keep the process alive solely for the forwarder.
+    timer.unref?.()
+  }
+
   return {
     start() {
-      if (timer !== undefined) return
-      timer = setInterval(() => void tick(), intervalMs)
-      // Do not keep the process alive solely for the forwarder.
-      timer.unref?.()
+      if (!stopped) return
+      stopped = false
+      scheduleNext()
     },
     stop() {
+      stopped = true
       if (timer !== undefined) {
-        clearInterval(timer)
+        clearTimeout(timer)
         timer = undefined
       }
     },

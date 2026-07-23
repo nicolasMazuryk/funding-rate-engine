@@ -17,7 +17,7 @@ import { recoveredFromWal } from '../../../../src/core/runtime/engine.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../../../helpers/build-skeleton-engine.js'
 import { harnessPool } from '../../../helpers/harness-pool.js'
 import { createInMemoryRepo } from '../../../helpers/in-memory-repo.js'
-import { hangEntryOrders, spyEntryOrders } from '../../../helpers/sim-spies.js'
+import { hangEntryOrders, hangExitOrders, spyEntryOrders } from '../../../helpers/sim-spies.js'
 import { BTC, DEADLINE_TS, driveToEntry, INTENT_ID, START_MS } from '../../../helpers/skeleton-scenario.js'
 import { type TempDir, tempDir } from '../../../helpers/temp-dir.js'
 import { crash } from '../../../scenarios/crash-helper.js'
@@ -96,5 +96,33 @@ describe('crash recovery — Scenario B: during MONITORING', () => {
     clock.advanceTo(DEADLINE_TS)
     expect(engineB.engine.intentState(INTENT_ID)).toBe('CLOSED')
     expect(spy.count()).toBe(1) // one entry-leg order across both engines
+  })
+})
+
+describe('crash recovery — Scenario C: after MONITORING→EXITING WAL append, before exit fill', () => {
+  it('re-issues the same clientOrderId (no duplicate) and completes to CLOSED with the recovered exitReason', async () => {
+    // Engine A's exit-leg placeOrder hangs forever — WAL records EXITING (carrying the
+    // exitReason, `fireExit`), but the venue never sees the reduce-only close.
+    const engineA = build(hangExitOrders(sim))
+    driveToEntry(engineA)
+    expect(engineA.engine.intentState(INTENT_ID)).toBe('MONITORING')
+
+    clock.advanceTo(DEADLINE_TS) // fires the `timed` exit; the leg hangs
+    expect(engineA.engine.intentState(INTENT_ID)).toBe('EXITING')
+    expect(await sim.getPositions()).toEqual([{ symbol: BTC.symbol, side: 'long', qty: 0.001, entryPrice: BTC.price }])
+
+    crash(engineA)
+
+    // Engine B: same WAL path, same (real) venue, fresh repo.
+    const engineB = build(sim, { fresh: true })
+    const recovered = recoveredFromWal(engineB.wal.readAll())
+    expect(recovered.map((r) => [r.intentId, r.state])).toEqual([[INTENT_ID, 'EXITING']])
+    expect(recovered[0]?.exitReason).toBe('timed') // rode the EXITING transition, not just CLOSED
+
+    await engineB.engine.recover(recovered) // getOrder throws → re-issue the exit → fills for real
+
+    expect(engineB.engine.intentState(INTENT_ID)).toBe('CLOSED')
+    // Exactly flat — the re-issue did not duplicate the reduce-only close.
+    expect(await sim.getPositions()).toEqual([])
   })
 })

@@ -10,7 +10,7 @@
 {"fromState":"SUBMITTING_ENTRY","intentId":"BTC-28710000","kind":"transition","payload":{"entryFillPx":60000,"entryQty":0.001,"entrySide":"long","fundingReceived":true,"symbol":"BTC","tDeadlineMs":29010000,"tSettleMs":28800000},"seq":8,"toState":"MONITORING","ts":28710000,"v":1}
 {"event":{"qty":0.001,"side":"long","symbol":"BTC","type":"PositionUpdate"},"kind":"event","seq":9,"ts":28710000,"v":1}
 {"event":{"intentId":"BTC-28710000","kind":"deadline","ts":29010000,"type":"Timer"},"kind":"event","seq":10,"ts":29010000,"v":1}
-{"clientOrderId":"BTC-28710000-exit-1","fromState":"MONITORING","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-exit-1","symbol":"BTC"},"seq":11,"toState":"EXITING","ts":29010000,"v":1}
+{"clientOrderId":"BTC-28710000-exit-1","fromState":"MONITORING","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-exit-1","exitReason":"timed","symbol":"BTC"},"seq":11,"toState":"EXITING","ts":29010000,"v":1}
 {"event":{"clientOrderId":"BTC-28710000-exit-1","fillPx":60000,"qty":0.001,"status":"FILLED","type":"OrderUpdate"},"kind":"event","seq":12,"ts":29010000,"v":1}
 {"fromState":"EXITING","intentId":"BTC-28710000","kind":"transition","payload":{"exitReason":"timed","symbol":"BTC"},"seq":13,"toState":"CLOSED","ts":29010000,"v":1}
 {"event":{"qty":0,"side":"short","symbol":"BTC","type":"PositionUpdate"},"kind":"event","seq":14,"ts":29010000,"v":1}

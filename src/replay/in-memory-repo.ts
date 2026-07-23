@@ -10,7 +10,7 @@
  */
 
 import { TERMINAL_INTENT_STATES } from '../core/intent/intent-machine.js'
-import type { IntentSnapshot, Repo } from '../core/ports/index.js'
+import type { IntentSnapshot, KillSwitchRecord, Repo, TrackerSnapshotRecord } from '../core/ports/index.js'
 
 export interface InMemoryRepo extends Repo {
   /** All upserted snapshots, for assertions. */
@@ -20,6 +20,8 @@ export interface InMemoryRepo extends Repo {
 export function createInMemoryRepo(): InMemoryRepo {
   const byIntent = new Map<string, IntentSnapshot>()
   const terminal = new Set<string>(TERMINAL_INTENT_STATES)
+  const trackerSnapshots = new Map<string, TrackerSnapshotRecord>()
+  let killSwitchRow: KillSwitchRecord | undefined
 
   return {
     upsertIntentState(snapshot: IntentSnapshot): Promise<void> {
@@ -28,6 +30,20 @@ export function createInMemoryRepo(): InMemoryRepo {
     },
     loadNonTerminalIntents(): Promise<readonly IntentSnapshot[]> {
       return Promise.resolve([...byIntent.values()].filter((s) => !terminal.has(s.state)))
+    },
+    upsertKillSwitch(record: KillSwitchRecord): Promise<void> {
+      killSwitchRow = record
+      return Promise.resolve()
+    },
+    loadKillSwitch(): Promise<KillSwitchRecord | undefined> {
+      return Promise.resolve(killSwitchRow)
+    },
+    upsertTrackerSnapshot(snapshot: TrackerSnapshotRecord): Promise<void> {
+      trackerSnapshots.set(snapshot.intentId, snapshot)
+      return Promise.resolve()
+    },
+    loadTrackerSnapshots(): Promise<readonly TrackerSnapshotRecord[]> {
+      return Promise.resolve([...trackerSnapshots.values()])
     },
     snapshots(): readonly IntentSnapshot[] {
       return [...byIntent.values()]

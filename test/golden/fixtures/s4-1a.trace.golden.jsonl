@@ -22,7 +22,7 @@
 {"event":{"clientOrderId":"BTC-28710000-tp-2","status":"OPEN","type":"OrderUpdate"},"kind":"event","seq":20,"ts":28801000,"v":1}
 {"event":{"qty":0.002,"side":"long","symbol":"BTC","type":"PositionUpdate"},"kind":"event","seq":21,"ts":28801000,"v":1}
 {"event":{"price":59200,"symbol":"BTC","ts":28802000,"type":"MarketTick"},"kind":"event","seq":22,"ts":28802000,"v":1}
-{"clientOrderId":"BTC-28710000-exit-1","fromState":"MONITORING","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-exit-1","symbol":"BTC"},"seq":23,"toState":"EXITING","ts":28802000,"v":1}
+{"clientOrderId":"BTC-28710000-exit-1","fromState":"MONITORING","intentId":"BTC-28710000","kind":"transition","payload":{"clientOrderId":"BTC-28710000-exit-1","exitReason":"sl_hit","symbol":"BTC"},"seq":23,"toState":"EXITING","ts":28802000,"v":1}
 {"event":{"clientOrderId":"BTC-28710000-exit-1","fillPx":59200,"qty":0.002,"status":"FILLED","type":"OrderUpdate"},"kind":"event","seq":24,"ts":28802000,"v":1}
 {"fromState":"EXITING","intentId":"BTC-28710000","kind":"transition","payload":{"exitReason":"sl_hit","symbol":"BTC"},"seq":25,"toState":"CLOSED","ts":28802000,"v":1}
 {"event":{"qty":0,"side":"short","symbol":"BTC","type":"PositionUpdate"},"kind":"event","seq":26,"ts":28802000,"v":1}

@@ -41,6 +41,8 @@ import { createScheduler } from './core/runtime/scheduler.js'
 import type { Instance } from './persistence/db/instance.js'
 import { createPgRepo } from './persistence/db/repo.js'
 import { createPersistenceProjector } from './persistence/projector.js'
+import { recoverOnBoot } from './persistence/recovery.js'
+import { createForwarder } from './persistence/wal/forwarder.js'
 import { createWalFile } from './persistence/wal/wal-file.js'
 import { createLogger } from './replay/logger.js'
 import { createRiskGate } from './risk/gate.js'
@@ -111,6 +113,7 @@ async function run(): Promise<void> {
     riskGate,
     killSwitch,
     initialBalance,
+    configHash: cfg.revisionHash,
     onReconciliation: (record) => logger.info({ reconciliation: record }, 'reconciliation'),
   }
   const gateDeps = { clock, fundingIncome: (symbol: string, range: TimeRange) => adapter.fundingIncome(symbol, range) }
@@ -136,6 +139,16 @@ async function run(): Promise<void> {
     (state) => void repo.upsertKillSwitch?.({ state, updatedTs: clock.now() }).catch(() => {}),
   )
 
+  // WAL → Postgres shipping, off the hot path (`14` §2.1). Pre-0370 gap: this never ran in
+  // the live composition root (only the e2e harness started it).
+  const forwarder = createForwarder({ wal, pool, instance })
+  forwarder.start()
+
+  // Full crash recovery (`14` §5, task 0370): config-hash fail-loud check, replay the WAL
+  // (local + shipped Postgres history), reconstruct every non-terminal intent, reconcile vs
+  // venue REST, restore the kill switch — all BEFORE the scheduler starts driving the engine.
+  await recoverOnBoot({ repo, wal, engine, killSwitch, configHash: cfg.revisionHash, instance, pool })
+
   scheduler.start()
   logger.info('instance running')
 
@@ -146,6 +159,7 @@ async function run(): Promise<void> {
     shuttingDown = true
     logger.info({ signal }, 'shutting down')
     scheduler.stop()
+    forwarder.stop()
     unsubKillSwitch()
     projector.stop()
     engine.dispose()

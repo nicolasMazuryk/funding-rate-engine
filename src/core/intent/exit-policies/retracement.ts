@@ -22,7 +22,7 @@
  */
 
 import type { Clock } from '../../ports/clock.js'
-import type { FundingGate, FundingIncomePoll } from '../../runtime/funding-gate.js'
+import type { FundingGate, FundingIncomePoll, GateSnapshot } from '../../runtime/funding-gate.js'
 import { createFundingGate } from '../../runtime/funding-gate.js'
 import type { ExitPolicyContext, ExitPolicyHandler } from '../exit-policy.js'
 import type { ExitReason } from '../intent-machine.js'
@@ -139,7 +139,13 @@ interface TrackerRecord {
   tpAttempt: number
 }
 
-/** Serializable per-intent tracker state for the same-session restart test (0310; full recovery is 0370). */
+/**
+ * Serializable per-intent tracker state — the durable `tracker_snapshots` payload (0370
+ * boot-respawn; same-session restart proven at 0310). `gate` carries the shared funding
+ * gate's per-intent snapshot so a boot restore re-arms it (the REST poll / timeout timers),
+ * not just the tracker's `phase`/`pLow` — absent once the gate has already opened/closed
+ * (nothing left to re-arm).
+ */
 export interface RetracementSnapshot {
   readonly intentId: string
   readonly tracker: TrackerState
@@ -148,6 +154,7 @@ export interface RetracementSnapshot {
   readonly slCoid?: string
   readonly tpCoid?: string
   readonly tpAttempt: number
+  readonly gate?: GateSnapshot
 }
 
 /** The handler plus its snapshot pair (extra members beyond {@link ExitPolicyHandler}; the engine uses only the base). */
@@ -307,6 +314,7 @@ export function createRetracementHandler(deps: RetracementDeps): RetracementHand
     },
 
     serialize(): RetracementSnapshot[] {
+      const gateSnapshots = new Map(gate.serialize().map((g) => [g.intentId, g]))
       return [...records.entries()].map(([intentId, r]) => ({
         intentId,
         tracker: r.tracker,
@@ -315,10 +323,12 @@ export function createRetracementHandler(deps: RetracementDeps): RetracementHand
         tpAttempt: r.tpAttempt,
         ...(r.slCoid !== undefined ? { slCoid: r.slCoid } : {}),
         ...(r.tpCoid !== undefined ? { tpCoid: r.tpCoid } : {}),
+        ...(gateSnapshots.has(intentId) ? { gate: gateSnapshots.get(intentId) } : {}),
       }))
     },
 
     restore(snapshots): void {
+      const gateSnapshots: GateSnapshot[] = []
       for (const s of snapshots) {
         records.set(s.intentId, {
           tracker: s.tracker,
@@ -328,7 +338,11 @@ export function createRetracementHandler(deps: RetracementDeps): RetracementHand
           slCoid: s.slCoid,
           tpCoid: s.tpCoid,
         })
+        if (s.gate !== undefined) gateSnapshots.push(s.gate)
       }
+      // Only still-`armed` gates re-schedule (`FundingGate.restore`); an already-open/closed
+      // gate restores inert — the tracker's own `phase` already carries that verdict.
+      if (gateSnapshots.length > 0) gate.restore(gateSnapshots)
     },
   }
 }
