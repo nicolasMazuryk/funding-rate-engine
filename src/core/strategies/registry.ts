@@ -15,6 +15,7 @@ import type { ExitPolicyKind } from '../intent/exit-policy.js'
 import type { ErrorCode } from '../intent/intent-machine.js'
 import type { Side } from '../ports/exchange-adapter.js'
 import type { FeeInputs } from '../runtime/cost-model.js'
+import type { EntrySubMachineFactory } from '../runtime/entry-submachine.js'
 import type { Candidate } from '../runtime/finder.js'
 
 /** Exit-policy family a module uses. The kind union is owned by `exit-policy.ts` (single source of truth). */
@@ -37,6 +38,8 @@ export interface RuntimeStrategyConfig {
   readonly stopLossPercent?: number
   /** TP distance multiplier on `|F|` (`tp_variant_a_multiplier`, `04` §3/§5). S3a only. */
   readonly tpVariantAMultiplier?: number
+  /** TP distance multiplier on the settled `|F|` (`tp_multiplier`, `07` §2 step 4). S6 only. */
+  readonly tpMultiplier?: number
   /** Delay before `T_settle` at which the entry timer fires, seconds (`entry_offset_seconds`). */
   readonly entryOffsetSeconds: number
   /** Delay after `T_settle` at which the `timed` exit fires, seconds (`exit_offset_seconds`, S1). Absent for the WS-gated strategies (S1-WS/S2/S6). */
@@ -104,6 +107,13 @@ export interface StrategyModule {
    * market entry (every non-ladder strategy is byte-unchanged); present ⇒ the ladder path.
    */
   readonly entryPlan?: LadderEntryPlan
+  /**
+   * Entry sub-machine marker (`07` §2/§3, S6). Present ⇒ the engine delegates the whole
+   * `SUBMITTING_ENTRY` phase to the sub-machine (the multi-step PRE_FUNDING → funding-gate → MAIN
+   * reversal choreography) via the {@link ../runtime/entry-submachine.ts}.EntryContext seam, instead
+   * of its single-market entry. Absent ⇒ existing behavior (every non-S6 strategy byte-unchanged).
+   */
+  readonly entrySubMachine?: EntrySubMachineFactory
   /**
    * No-fill terminal error code for a ladder/single-limit entry (`06` §2 R5, S4.2a). When set, the
    * engine carries `expireAt` on each entry limit and a zero-fill expiry terminates

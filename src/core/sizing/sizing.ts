@@ -51,6 +51,15 @@ function roundToStep(value: number, step: number): number {
   return Math.round(value / step) * step
 }
 
+/** Ceil `value` up to a multiple of `step` (lot step); float-noise safe (a value already on-grid stays put). */
+function ceilToStep(value: number, step: number): number {
+  const ratio = value / step
+  const nearest = Math.round(ratio)
+  const tolerance = RATIO_EPSILON * Math.max(1, Math.abs(ratio))
+  const units = Math.abs(nearest - ratio) <= tolerance ? nearest : Math.ceil(ratio)
+  return units * step
+}
+
 /**
  * Base-unit qty for a fixed USD notional (`00_globals.md` §4):
  * `amountUsd / price / contractSize`, floored to the lot step (`amountPrecision`).
@@ -63,6 +72,18 @@ export function computeQty(amountUsd: number, price: number, instrument: Instrum
 /** Round a price to the venue tick (`pricePrecision`); never rejects (`11` §3 table). */
 export function roundPrice(price: number, instrument: Instrument): number {
   return roundToStep(price, instrument.pricePrecision)
+}
+
+/**
+ * The smallest feasible base-unit qty at `price` (`07_strategy_6.md` §2): the lot-step
+ * ceiling of `max(minQty, minNotional / (price · contractSize))` — the least qty that
+ * clears both the lot minimum and the min-notional floor. S6's PRE_FUNDING leg is sized
+ * to this (`preFundingVolume`, derived — not configurable), then the sizing guard checks
+ * it is strictly below the main qty (else the reversal leaves no net position → skip).
+ */
+export function minFeasibleQty(price: number, instrument: Instrument): number {
+  const byNotional = instrument.minNotional / (price * instrument.contractSize)
+  return ceilToStep(Math.max(instrument.minQty, byNotional), instrument.amountPrecision)
 }
 
 /**

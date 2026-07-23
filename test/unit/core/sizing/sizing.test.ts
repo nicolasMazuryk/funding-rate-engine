@@ -5,6 +5,7 @@ import {
   capReduceOnlyQty,
   checkFeasibility,
   computeQty,
+  minFeasibleQty,
   roundPrice,
   splitLadder,
 } from '../../../../src/core/sizing/sizing.js'
@@ -194,5 +195,41 @@ describe('property: ladder split (17 §2)', () => {
         },
       ),
     )
+  })
+})
+
+describe('minFeasibleQty (07 §2 — S6 PRE_FUNDING size)', () => {
+  it('ceils max(minQty, minNotional/(price·contractSize)) up to the lot step', () => {
+    // 5 / (60000·1) = 0.0000833… → ceil to the 0.001 lot step = 0.001 (which is also minQty here).
+    expect(minFeasibleQty(60_000, instrument())).toBeCloseTo(0.001, 12)
+  })
+
+  it('is min-notional-bound when min-notional dominates the lot minimum', () => {
+    // minNotional 20, price 100 → 0.2; minQty 0.001 → notional wins, ceil-to-step 0.2.
+    expect(minFeasibleQty(100, instrument({ minNotional: 20, minQty: 0.001 }))).toBeCloseTo(0.2, 12)
+  })
+
+  it('is min-qty-bound when the lot minimum dominates the notional floor', () => {
+    // minNotional 5, price 100000 → 0.00005; minQty 0.01 wins.
+    expect(minFeasibleQty(100_000, instrument({ minNotional: 5, minQty: 0.01, amountPrecision: 0.01 }))).toBeCloseTo(
+      0.01,
+      12,
+    )
+  })
+
+  it('ceils a sub-step notional floor up to the next whole lot (never floors below feasibility)', () => {
+    // 5 / (1234·1) = 0.004052… → must ceil to 0.005 (the next 0.001 step), not floor to 0.004.
+    expect(minFeasibleQty(1234, instrument({ minNotional: 5, minQty: 0.001 }))).toBeCloseTo(0.005, 12)
+  })
+
+  it('boundary: sizing guard preQty == mainQty is a skip (minFeasibleQty equals the main lot)', () => {
+    // With amount 5 at price 100000 (contractSize 1): computeQty = floor(5/100000)=0 lot... use a case where
+    // main qty (amountUsd/price) equals the min feasible qty exactly → the engine skips (preQty >= mainQty).
+    const inst = instrument({ minNotional: 5, minQty: 0.001, amountPrecision: 0.001 })
+    const price = 1000
+    const mainQty = computeQty(5, price, inst) // 5/1000 = 0.005
+    const preQty = minFeasibleQty(price, inst) // ceil(max(0.001, 5/1000)) = 0.005
+    expect(preQty).toBeCloseTo(mainQty, 12)
+    expect(preQty >= mainQty).toBe(true) // engine's reversal sizing guard → skip
   })
 })

@@ -90,7 +90,8 @@ describe('intent FSM — every exit_reason is producible into CLOSED', () => {
 
 describe('intent FSM — every error_code is producible into an error terminal', () => {
   // Each code paired with a legal error-terminal transition (`00_globals` §10.2).
-  // Terminal choice is representative; S6's precise routing is refined in 0350.
+  // S6's entry sub-machine spans SUBMITTING_ENTRY entirely (MONITORING begins only after
+  // MAIN fill + net confirm), so all seven S6 terminals fire from SUBMITTING_ENTRY (0350).
   const cases: ReadonlyArray<readonly [ErrorCode, IntentState, IntentState]> = [
     ['kill_switch', 'SELECTED', 'ABORTED'],
     ['limit_expired', 'SUBMITTING_ENTRY', 'NO_POSITION'],
@@ -98,10 +99,10 @@ describe('intent FSM — every error_code is producible into an error terminal',
     ['pre_funding_order_failed', 'SUBMITTING_ENTRY', 'ENTRY_FAILED'],
     ['pre_funding_order_rejected', 'SUBMITTING_ENTRY', 'ENTRY_FAILED'],
     ['pre_funding_not_filled', 'SUBMITTING_ENTRY', 'NO_POSITION'],
-    ['funding_event_timeout', 'MONITORING', 'NO_POSITION'],
+    ['funding_event_timeout', 'SUBMITTING_ENTRY', 'NO_POSITION'],
     ['main_order_failed', 'SUBMITTING_ENTRY', 'ENTRY_FAILED'],
     ['main_order_rejected', 'SUBMITTING_ENTRY', 'ENTRY_FAILED'],
-    ['close_pre_funding_failed', 'MONITORING', 'NO_POSITION'],
+    ['close_pre_funding_failed', 'SUBMITTING_ENTRY', 'NO_POSITION'],
   ]
   for (const [errorCode, from, to] of cases) {
     it(`${to} with error_code ${errorCode}`, () => {

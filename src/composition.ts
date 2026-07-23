@@ -23,6 +23,7 @@ import {
 import { TIMED_HANDLER } from './core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry } from './core/intent/exit-policy.js'
 import type { Clock } from './core/ports/clock.js'
+import type { Side } from './core/ports/exchange-adapter.js'
 import type { EngineDeps } from './core/runtime/engine.js'
 import { createEngine, type Engine } from './core/runtime/engine.js'
 import type { FundingIncomePoll } from './core/runtime/funding-gate.js'
@@ -33,11 +34,19 @@ import { createStrategy2 } from './core/strategies/strategy-2.js'
 import { createStrategy3a, strategy3aGeometry } from './core/strategies/strategy-3a.js'
 import { createStrategy4_1a, strategy4_1aTpGeometry } from './core/strategies/strategy-4-1a.js'
 import { createStrategy4_2a } from './core/strategies/strategy-4-2a.js'
+import { createStrategy6, strategy6Geometry } from './core/strategies/strategy-6.js'
 
 /** Read a numeric strategy param or fail loud — a missing/non-numeric key is a config bug. */
 function numberParam(params: Readonly<Record<string, number | string>>, key: string): number {
   const value = params[key]
   if (typeof value !== 'number') throw new Error(`composition: strategy param '${key}' is not a number (${value})`)
+  return value
+}
+
+/** Read a string strategy param or fail loud — S6's `mainSide` enum. */
+function stringParam(params: Readonly<Record<string, number | string>>, key: string): string {
+  const value = params[key]
+  if (typeof value !== 'string') throw new Error(`composition: strategy param '${key}' is not a string (${value})`)
   return value
 }
 
@@ -56,6 +65,27 @@ function sizingField(sizing: Readonly<Record<string, number>>, key: string): num
  */
 export function runtimeConfigFromEffective(cfg: EffectiveConfig): RuntimeStrategyConfig {
   const params = cfg.strategyParams
+  // S6 (`07` §5) is signed-any and does not carry the negative-only threshold the shared `base`
+  // reads, so it is projected first from its own keys. `mainSide` drives `entrySide` (the managed net
+  // direction); the threshold sign picks the finder ordering family; sizing resolves `mainAmountUsd`.
+  if (cfg.strategy === 's6') {
+    const threshold = numberParam(params, 'fundingThresholdPercent')
+    return {
+      id: 's6',
+      thresholdPercent: threshold,
+      direction: threshold >= 0 ? 'positive' : 'negative',
+      entrySide: stringParam(params, 'mainSide') as Side,
+      entryOffsetSeconds: numberParam(params, 'entryOffsetSeconds'),
+      fundingFeeTimeoutSeconds: numberParam(params, 'fundingFeeTimeoutSeconds'),
+      tpMultiplier: numberParam(params, 'tpMultiplier'),
+      slMultiplier: numberParam(params, 'slMultiplier'),
+      deadlineSeconds: numberParam(params, 'deadlineSeconds'),
+      amountUsd: sizingField(cfg.sizing, 'mainAmountUsd'),
+      leverage: sizingField(cfg.sizing, 'leverage'),
+      costFees: { takerFeePct: cfg.exchangeProfile.takerFeePct, makerFeePct: cfg.exchangeProfile.makerFeePct },
+      costParams: params,
+    }
+  }
   // The exit offset (S1's `timed`) and the funding-fee timeout (S1-WS's gate) are read
   // conditionally: each strategy's YAML carries only its own, so reading the absent one
   // unconditionally would throw. S1-WS has no `exit_offset_seconds`; S1 no `funding_fee_timeout_seconds`.
@@ -209,5 +239,22 @@ export function wireS4_2aEngine(deps: S1EngineDeps): Engine {
     ...deps,
     registry: createStrategyRegistry([createStrategy4_2a()]),
     exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
+  })
+}
+
+/**
+ * Wire the engine with the S6 module + the `sl_tp_deadline_post_funding_event` handler (task 0350).
+ * S6's `entrySubMachine` marker switches the engine's `SUBMITTING_ENTRY` phase to the entry
+ * sub-machine (PRE_FUNDING → funding-gate → MAIN reversal), whose gate is built from `gate` (the
+ * S1-WS clock + funding-income shape). The exit is the reused static OCO handler with S6's settled-`|F|`
+ * geometry, registered under S6's own kind so a mixed fleet resolves the right handler.
+ */
+export function wireS6Engine(deps: S1EngineDeps, gate: S1WsGateDeps): Engine {
+  return createEngine({
+    ...deps,
+    registry: createStrategyRegistry([createStrategy6(gate)]),
+    exitPolicyRegistry: createExitPolicyRegistry([
+      createSlTpDeadlineHandler(strategy6Geometry, 'sl_tp_deadline_post_funding_event'),
+    ]),
   })
 }

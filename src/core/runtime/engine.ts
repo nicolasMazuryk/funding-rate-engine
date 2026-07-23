@@ -47,7 +47,7 @@ import type { Balance, ExchangeAdapter, Order, Side } from '../ports/exchange-ad
 import type { Repo } from '../ports/repo.js'
 import type { RiskGate } from '../ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../ports/transition-log.js'
-import { capReduceOnlyQty, computeQty, roundPrice, splitLadder } from '../sizing/sizing.js'
+import { capReduceOnlyQty, computeQty, minFeasibleQty, roundPrice, splitLadder } from '../sizing/sizing.js'
 import type {
   LadderEntryPlan,
   RuntimeStrategyConfig,
@@ -56,6 +56,7 @@ import type {
 } from '../strategies/registry.js'
 import { type ConditionalStop, isTriggered } from './conditional-stop.js'
 import { evaluateProfitCondition, type ProfitBreakdown } from './cost-model.js'
+import type { EntryContext, EntrySubMachine } from './entry-submachine.js'
 import { type FindCandidatesInput, findCandidates } from './finder.js'
 import { computeFundingSchedule } from './funding-schedule.js'
 import { type PreflightSnapshot, runPreflight } from './preflight.js'
@@ -98,10 +99,15 @@ export interface EngineDeps {
   readonly onOpsEvent?: (event: OpsEvent) => void
 }
 
-/** A diagnostic engine ops event surfaced via {@link EngineDeps.onOpsEvent} (`05` §2 step 2). */
+/** A diagnostic engine ops event surfaced via {@link EngineDeps.onOpsEvent} (`05` §2 step 2, `07` §3). */
 export interface OpsEvent {
-  /** The only ops event so far: a ladder rung filled before `T_settle`. */
-  readonly kind: 'ladder.pre_funding_fill'
+  /**
+   * The diagnostic events the engine surfaces:
+   *  - `ladder.pre_funding_fill` — a ladder rung filled before `T_settle` (S4.1a `05` §2 step 2);
+   *  - `strategy6.close_pre_funding_failed` — S6's abort ladder could not flatten PRE (orphan risk, `07` §3);
+   *  - `strategy6.position_fetch_fallback` — S6's REST net-qty confirm failed; tracked fills used (`07` §2 step 4).
+   */
+  readonly kind: 'ladder.pre_funding_fill' | 'strategy6.close_pre_funding_failed' | 'strategy6.position_fetch_fallback'
   readonly intentId: string
   readonly symbol: string
 }
@@ -122,6 +128,8 @@ export interface IntentWalFields {
   readonly tSettleMs?: number
   /** Funding-accrual verdict (`00_globals.md` §3.1): entry fill landed before `T_settle`, so the position accrues. */
   readonly fundingReceived?: boolean
+  /** Settled funding rate at MAIN fill, signed percent — S6's TP/SL `|F|` source (`07` §2 step 4). Absent for other strategies. */
+  readonly settledRatePercent?: number
 }
 
 /**
@@ -185,6 +193,8 @@ interface IntentRecord {
   anchorPrice?: number
   /** Realized predicted funding rate the intent entered on, signed percent — S3a's TP `|F|` source (`04` §3). In-memory only. */
   ratePercent?: number
+  /** Settled funding rate at MAIN fill, signed percent — S6's TP/SL `|F|` source (`07` §2 step 4). Set on `→ MONITORING`. */
+  settledRatePercent?: number
   deadlineMs?: number
   /** Exit reason the exit-policy handler commanded (stashed on `→ EXITING`, recorded on `→ CLOSED`). */
   exitReason?: ExitReason
@@ -257,6 +267,18 @@ const validateTransition = transitionIntent as unknown as (
   to: IntentState,
   payload: IntentTerminalPayload,
 ) => IntentTerminalPayload
+
+/**
+ * S6 entry terminals whose position outcome is "none" (order submit/reject) → `ENTRY_FAILED`
+ * (`07` §3). Every other S6 terminal (`pre_funding_not_filled` / `funding_event_timeout` /
+ * `close_pre_funding_failed`) is a position-was-flattened outcome → `NO_POSITION`.
+ */
+const S6_ENTRY_FAILED_CODES: ReadonlySet<ErrorCode> = new Set([
+  'pre_funding_order_failed',
+  'pre_funding_order_rejected',
+  'main_order_failed',
+  'main_order_rejected',
+])
 
 /** Resolve the active strategy module or fail loud — a misconfigured id is a startup bug. */
 function resolveModule(registry: StrategyRegistry, id: RuntimeStrategyConfig['id']): StrategyModule {
@@ -342,11 +364,88 @@ export function createEngine(deps: EngineDeps): Engine {
   // §3; the threshold proxy would sit the TP too shallow to cover the funding cost). In-memory
   // only (mirrors `settleBySymbol`); no WAL field, so s1/s1-ws/s2 goldens are untouched (0370 re-derives).
   const rateBySymbol = new Map<string, number>()
+  // Settled funding rate per symbol, stashed on `FundingSettled` and read at S6's `enterMonitoring` —
+  // S6's OCO geometry is computed at MAIN fill from the SETTLED `|F|`, not the predicted rate (`07` §2
+  // step 4). In-memory only (mirrors `rateBySymbol`); WAL'd onto the intent only when present (0370 re-derives).
+  const settledRateBySymbol = new Map<string, number>()
   // Advisory cost-model breakdown per symbol, stashed at selection, copied onto the intent at entry (task 0150).
   const costBySymbol = new Map<string, ProfitBreakdown>()
   // Latest venue state the preflight reads, updated from the event stream.
   let latestBalance: Balance | undefined = deps.initialBalance
   const latestPrice = new Map<string, number>()
+
+  // S6 entry sub-machine (`07` §2/§3): present ⇒ the engine delegates the whole `SUBMITTING_ENTRY`
+  // phase to it via `entryCtx`. Instantiated once so each engine owns its gate + per-intent state.
+  const entrySubMachine: EntrySubMachine | undefined = activeModule.entrySubMachine?.()
+  // The order-command seam the sub-machine drives (entry-side analogue of `exitCtx`). The engine
+  // assigns deterministic ids, tracks the legs, WALs the transitions, and owns the FSM.
+  const entryCtx: EntryContext = {
+    placePreFunding(intentId, qty): string {
+      const rec = requireIntent(intentId)
+      const clientOrderId = makeClientOrderId({ intentId, leg: 'pre', attempt: 1 })
+      pendingOrders.set(clientOrderId, { intentId, leg: 'entry' })
+      // PRE is at `exitSide` (opposite the managed direction) and NOT reduce-only (it opens the tiny
+      // position that subscribes the private WS — `07` §2 step 1).
+      void exchange.placeOrder({ symbol: rec.symbol, side: exitSide, type: 'market', qty, clientOrderId })
+      return clientOrderId
+    },
+    placeMain(intentId, qty): string {
+      const rec = requireIntent(intentId)
+      const clientOrderId = makeClientOrderId({ intentId, leg: 'main', attempt: 1 })
+      pendingOrders.set(clientOrderId, { intentId, leg: 'entry' })
+      // MAIN is at `entrySide` (the managed direction); its qty > PRE reverses the net position (`07` §2 step 3).
+      void exchange.placeOrder({ symbol: rec.symbol, side: entrySide, type: 'market', qty, clientOrderId })
+      return clientOrderId
+    },
+    placeAbortClose(intentId, attempt, qty): void {
+      const rec = requireIntent(intentId)
+      const clientOrderId = makeClientOrderId({ intentId, leg: 'preabort', attempt })
+      // Fire-and-forget reduce-only close at `entrySide` (closes the opposite PRE leg). Not tracked in
+      // `pendingOrders` — the abort ladder is driven by REST ground truth, not this order's update.
+      void exchange.placeOrder({
+        symbol: rec.symbol,
+        side: entrySide,
+        type: 'market',
+        qty,
+        clientOrderId,
+        reduceOnly: true,
+      })
+    },
+    getPositions: () => exchange.getPositions(),
+    enterMonitoring(intentId, netQty, entryPx): void {
+      const rec = intents.get(intentId)
+      if (rec === undefined || rec.state !== 'SUBMITTING_ENTRY') return // idempotent: a raced/late confirm no-ops
+      dropEntryOrders(intentId)
+      // Stash the settled `|F|` the OCO geometry anchors on (`07` §2 step 4), threaded onto the intent
+      // by `adoptEntryFill`. Absent for a symbol with no `FundingSettled` yet → geometry falls back.
+      rec.settledRatePercent = settledRateBySymbol.get(rec.symbol)
+      adoptEntryFill(intentId, rec, entryPx, netQty)
+    },
+    failEntry(intentId, errorCode): void {
+      const rec = intents.get(intentId)
+      if (rec === undefined || rec.state !== 'SUBMITTING_ENTRY') return // idempotent
+      dropEntryOrders(intentId)
+      const to: IntentState = S6_ENTRY_FAILED_CODES.has(errorCode) ? 'ENTRY_FAILED' : 'NO_POSITION'
+      commit({ intentId, symbol: rec.symbol, from: 'SUBMITTING_ENTRY', to, payload: { errorCode } })
+    },
+    emitOps(event): void {
+      deps.onOpsEvent?.(event)
+    },
+  }
+
+  /** Look up an intent the sub-machine is placing an order for, or fail loud — an unknown id is a wiring bug. */
+  function requireIntent(intentId: string): IntentRecord {
+    const rec = intents.get(intentId)
+    if (rec === undefined) throw new Error(`Engine: entry sub-machine referenced unknown intent '${intentId}'`)
+    return rec
+  }
+
+  /** Drop this intent's tracked entry legs (PRE/MAIN) from `pendingOrders` on a terminal / MONITORING handoff. */
+  function dropEntryOrders(intentId: string): void {
+    for (const [clientOrderId, pending] of [...pendingOrders]) {
+      if (pending.intentId === intentId && pending.leg === 'entry') pendingOrders.delete(clientOrderId)
+    }
+  }
 
   /** Count of live (non-terminal) intents — the risk gate's concurrency input. */
   function countLiveIntents(): number {
@@ -463,6 +562,12 @@ export function createEngine(deps: EngineDeps): Engine {
   function onEntry(event: Timer): void {
     const symbol = event.symbol
     if (symbol === undefined) return
+    // S6 (`07` §2) delegates the whole entry to its sub-machine (PRE_FUNDING → funding-gate → MAIN
+    // reversal). Presence of the marker is the switch — every non-S6 strategy is unaffected.
+    if (entrySubMachine !== undefined) {
+      onEntrySubMachine(event, symbol)
+      return
+    }
     // Ladder strategies (S4.1a) pre-place N rung limits + an engine-side SL instead of one
     // market order (`05` §2). Presence of the plan is the switch — every non-ladder strategy
     // stays on the single-market path unchanged.
@@ -614,6 +719,74 @@ export function createEngine(deps: EngineDeps): Engine {
     scheduler.scheduleDeadlineTimer(intentId, deadlineMs)
   }
 
+  /**
+   * S6 entry path (`07` §2): size the MAIN leg (`mainAmountUsd`) and the tiny PRE_FUNDING leg (min
+   * feasible qty), apply the reversal sizing guard (`preQty < mainQty`, else the reversal leaves no
+   * net position → skip with no trace), preflight the **net** qty, commit `SELECTED → SUBMITTING_ENTRY`,
+   * and hand the choreography to the sub-machine. Fail-closed on an unknown price, as the market path does.
+   */
+  function onEntrySubMachine(event: Timer, symbol: string): void {
+    if (entrySubMachine === undefined) return
+    const intentId = `${symbol}-${event.ts}`
+    const price = latestPrice.get(symbol)
+    if (price === undefined) return // fail-closed
+    const instrument = exchange.normalize(symbol)
+    const mainQty = computeQty(strategyConfig.amountUsd, price, instrument)
+    const preQty = minFeasibleQty(price, instrument)
+    // Sizing guard (`07` §1), re-checked at submission against the fresh price: a reversal whose PRE leg
+    // is not strictly smaller than the MAIN leg leaves no net position — skip, no intent row, no trace.
+    if (preQty >= mainQty) return
+    const netQty = mainQty - preQty
+
+    // Preflight the managed net qty before creating the intent row: `skip` leaves no trace.
+    const result = runPreflight(preflightSnapshot(symbol, netQty), riskGate, symbol)
+    if (result.kind === 'skip') return
+
+    const settleTs = settleBySymbol.get(symbol)
+    const rec: IntentRecord = {
+      symbol,
+      state: 'SELECTED',
+      entrySide, // = mainSide (the managed net direction); exitSide is the reduce-only close side.
+      entryQty: netQty,
+      settleTs,
+      ratePercent: rateBySymbol.get(symbol),
+    }
+    const stashedCost = costBySymbol.get(symbol)
+    if (stashedCost !== undefined) rec.costBreakdown = stashedCost
+    intents.set(intentId, rec)
+
+    if (result.kind === 'reject') {
+      commit({ intentId, symbol, from: 'SELECTED', to: 'ABORTED', payload: { errorCode: result.errorCode } })
+      return
+    }
+    if (settleTs === undefined) {
+      throw new Error(`Engine: S6 intent '${intentId}' missing settleTs for the funding gate`)
+    }
+    if (strategyConfig.fundingFeeTimeoutSeconds === undefined) {
+      throw new Error(`Engine: S6 intent '${intentId}' config has no fundingFeeTimeoutSeconds for the gate`)
+    }
+    commit({
+      intentId,
+      symbol,
+      from: 'SELECTED',
+      to: 'SUBMITTING_ENTRY',
+      payload: {},
+      extras: { entrySide, entryQty: netQty, tSettleMs: settleTs },
+    })
+    entrySubMachine.begin(
+      {
+        intentId,
+        symbol,
+        settleTs,
+        timeoutSeconds: strategyConfig.fundingFeeTimeoutSeconds,
+        preQty,
+        mainQty,
+        abortCloseSide: entrySide,
+      },
+      entryCtx,
+    )
+  }
+
   /** Project a MONITORING intent record into the read-only shape the exit policy observes. */
   function toMonitoredIntent(intentId: string, rec: IntentRecord): MonitoredIntent {
     return {
@@ -628,6 +801,7 @@ export function createEngine(deps: EngineDeps): Engine {
       deadlineMs: rec.deadlineMs,
       anchorPrice: rec.anchorPrice,
       ratePercent: rec.ratePercent,
+      settledRatePercent: rec.settledRatePercent,
     }
   }
 
@@ -800,11 +974,20 @@ export function createEngine(deps: EngineDeps): Engine {
         tDeadlineMs: deadlineMs,
         tSettleMs: rec.settleTs,
         fundingReceived,
+        // S6 threads the settled `|F|` onto the intent so recovery re-derives the OCO geometry; absent for
+        // every other strategy (JSON drops `undefined`), so their goldens are byte-unchanged.
+        settledRatePercent: rec.settledRatePercent,
       },
     })
   }
 
   function onEntryOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
+    // S6 (`07` §2): the PRE/MAIN updates route to the sub-machine, which owns the entry FSM. This
+    // bypasses the hard-coded `main_order_*` mapping below (unchanged for every non-S6 strategy).
+    if (entrySubMachine !== undefined) {
+      entrySubMachine.onOrderUpdate(event, intentId, entryCtx)
+      return
+    }
     if (rec.ladderRungs !== undefined) {
       onLadderRungUpdate(event, intentId, rec)
       return
@@ -993,9 +1176,16 @@ export function createEngine(deps: EngineDeps): Engine {
       // The funding-fee accrual is a MONITORING event — route it through the exit policy.
       case 'FundingFeeAccrued':
         dispatchToExitPolicy(event)
+        // For S6 it is also an *entry* trigger: the gate that fires MAIN opens on this event while the
+        // intent is still `SUBMITTING_ENTRY` (`07` §2 step 3). The gate matches per-symbol + is idempotent.
+        entrySubMachine?.onFundingFee(event, entryCtx)
+        return
+      // Stash the settled funding rate so S6's `enterMonitoring` can anchor its OCO geometry on the
+      // SETTLED `|F|` at MAIN fill (`07` §2 step 4), distinct from the decision-time predicted rate.
+      case 'FundingSettled':
+        settledRateBySymbol.set(event.symbol, event.rate)
         return
       // Not consumed by the skeleton yet — explicit no-ops keep the switch exhaustive.
-      case 'FundingSettled':
       case 'PositionUpdate':
       // Orphan handling is the risk layer's job (0380), which subscribes directly.
       case 'OrphanDetected':
@@ -1077,6 +1267,7 @@ export function createEngine(deps: EngineDeps): Engine {
     },
     dispose(): void {
       exitHandler.dispose?.() // release handler-owned resources (the funding gate's timers, S1-WS)
+      entrySubMachine?.dispose() // release the S6 entry sub-machine's funding gate timers
       unsubscribe()
     },
   }

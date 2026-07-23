@@ -16,7 +16,7 @@
  */
 
 import type { RuntimeStrategyConfig } from '../../strategies/registry.js'
-import type { ExitPolicyContext, ExitPolicyHandler, MonitoredIntent } from '../exit-policy.js'
+import type { ExitPolicyContext, ExitPolicyHandler, ExitPolicyKind, MonitoredIntent } from '../exit-policy.js'
 
 /**
  * The per-variant price math the handler is parameterized by (`04` §3, and 0330/0340). Each
@@ -41,11 +41,14 @@ interface LegRecord {
  * pair on arming, schedule the deadline, route a leg fill to the OCO close) is identical across
  * S3a/S4.\*a; only {@link SlTpDeadlineGeometry} differs.
  */
-export function createSlTpDeadlineHandler(geometry: SlTpDeadlineGeometry): ExitPolicyHandler {
+export function createSlTpDeadlineHandler(
+  geometry: SlTpDeadlineGeometry,
+  kind: ExitPolicyKind = 'sl_tp_deadline',
+): ExitPolicyHandler {
   const records = new Map<string, LegRecord>()
 
   return {
-    kind: 'sl_tp_deadline',
+    kind,
 
     arm(intent, config, ctx): number {
       if (intent.entryFillPx === undefined) {

@@ -32,7 +32,7 @@ import { TIMED_HANDLER } from '../core/intent/exit-policies/timed.js'
 import { createExitPolicyRegistry, type ExitPolicyRegistry } from '../core/intent/exit-policy.js'
 import type { EventBus } from '../core/ports/bus.js'
 import type { Clock } from '../core/ports/clock.js'
-import type { Balance, ExchangeAdapter } from '../core/ports/exchange-adapter.js'
+import type { Balance, ExchangeAdapter, TimeRange } from '../core/ports/exchange-adapter.js'
 import type { Repo } from '../core/ports/repo.js'
 import type { RiskGate } from '../core/ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../core/ports/transition-log.js'
@@ -49,6 +49,7 @@ import { createStrategy2 } from '../core/strategies/strategy-2.js'
 import { createStrategy3a, strategy3aGeometry } from '../core/strategies/strategy-3a.js'
 import { createStrategy4_1a, strategy4_1aTpGeometry } from '../core/strategies/strategy-4-1a.js'
 import { createStrategy4_2a } from '../core/strategies/strategy-4-2a.js'
+import { createStrategy6, strategy6Geometry } from '../core/strategies/strategy-6.js'
 import { createWalFile, type WalFile } from '../persistence/wal/wal-file.js'
 import { createRiskGate } from '../risk/gate.js'
 import { createKillSwitch, type KillSwitch } from '../risk/kill-switch.js'
@@ -173,6 +174,18 @@ function defaultRegistries(
     return {
       registry: createStrategyRegistry([createStrategy4_2a()]),
       exitPolicyRegistry: createExitPolicyRegistry([createLadderSlTpDeadlineHandler(strategy4_1aTpGeometry)]),
+    }
+  }
+  if (strategyConfig.id === 's6') {
+    // S6's `entrySubMachine` marker drives the PRE_FUNDING → funding-gate → MAIN reversal entry; its
+    // gate reads `exchange.fundingIncome`. The exit is the static OCO handler with S6's settled-`|F|`
+    // geometry, registered under S6's own kind.
+    const gate = { clock, fundingIncome: (symbol: string, range: TimeRange) => exchange.fundingIncome(symbol, range) }
+    return {
+      registry: createStrategyRegistry([createStrategy6(gate)]),
+      exitPolicyRegistry: createExitPolicyRegistry([
+        createSlTpDeadlineHandler(strategy6Geometry, 'sl_tp_deadline_post_funding_event'),
+      ]),
     }
   }
   return {

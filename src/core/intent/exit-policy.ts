@@ -52,6 +52,12 @@ export interface MonitoredIntent {
   readonly anchorPrice?: number
   /** Realized predicted funding rate the intent entered on, signed percent — S3a's TP `|F|` source (`04` §3). */
   readonly ratePercent?: number
+  /**
+   * Settled funding rate at MAIN fill, signed percent — S6's TP/SL `|F|` source (`07` §2 step 4).
+   * Distinct from the predicted {@link ratePercent}: S6's OCO geometry is computed at fill time from
+   * the *settled* rate, not the decision-time predicted rate.
+   */
+  readonly settledRatePercent?: number
 }
 
 /**
