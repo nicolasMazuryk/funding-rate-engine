@@ -166,9 +166,13 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     if (!limiter) return fn()
     await limiter.acquire(weight, 'general')
     try {
-      return await fn()
+      const result = await fn()
+      failures.recordSuccess() // a successful venue read closes/heals the circuit breaker (0380)
+      return result
     } catch (err) {
-      throw mapBinanceError(err)
+      const mapped = mapBinanceError(err)
+      failures.record(mapped) // consecutive NetworkError/VenueUnavailable trips the breaker (0380)
+      throw mapped
     }
   }
 
@@ -326,8 +330,12 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     status?: string
     average?: number
     filled?: number
+    reduceOnly?: boolean
   }): Order {
     const filled = o.filled ?? 0
+    // Binance reports `reduceOnly` on the ccxt order (unified flag or raw `info.reduceOnly`).
+    const info = typeof o.info === 'object' && o.info !== null ? (o.info as { reduceOnly?: unknown }) : undefined
+    const reduceOnly = o.reduceOnly === true || info?.reduceOnly === true || info?.reduceOnly === 'true'
     return {
       clientOrderId: o.clientOrderId ?? '',
       ...(o.id ? { venueOrderId: o.id } : {}),
@@ -337,6 +345,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
       status: ccxtOrderStatus(o.status, filled),
       ...(o.average !== undefined && o.average !== null ? { fillPx: o.average } : {}),
       ...(filled > 0 ? { qty: filled } : {}),
+      ...(reduceOnly ? { reduceOnly: true } : {}),
     }
   }
 
@@ -510,6 +519,10 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     // ── account reads (ccxt REST — private-stream reprime + trackers/preflight) ─
     getOrder(clientOrderId: string): Promise<Order> {
       return readOrder(clientOrderId)
+    },
+    async getOpenOrders(symbol?: string): Promise<Order[]> {
+      const open = await readOpenOrders()
+      return symbol === undefined ? open : open.filter((o) => o.symbol === symbol)
     },
     getPositions(): Promise<Position[]> {
       return readPositions()

@@ -250,6 +250,28 @@ describe('crash-recovery matrix (task 0370) — other verification points', () =
     expect(placeOrder).not.toHaveBeenCalled()
   })
 
+  it('kill-switch escalation persists across a crash: paused survives reboot and preflight rejects (0380 DoD #3)', async () => {
+    const walPath = await ctx.reset()
+    const instA = ctx.bootInstance({ startMs: START_MS, walPath })
+    // The order-breaker feed escalates to `paused` on a live-intent order-reject streak (0380). The
+    // kill-switch write-through (main.ts, 0370) persists it; here we drive the persistence directly.
+    instA.harness.killSwitch.transition('paused', 'order_breaker_open')
+    await instA.harness.repo.upsertKillSwitch?.({ state: 'paused', updatedTs: instA.harness.clock.now() })
+    crash(instA)
+
+    // Reboot rides the 0370 recovery: loadKillSwitch → transition restores `paused` before scheduling.
+    const instB = await recoverAndBoot(walPath, venueOf(instA))
+    expect(instB.harness.killSwitch.state()).toBe('paused')
+
+    // A fresh entry is now rejected by preflight with `kill_switch` (never opens a position).
+    driveToEntry(instB.harness)
+    await vi.waitFor(
+      async () => expectTerminal(await instB.intentRow(INTENT_ID), { state: 'ABORTED', errorCode: 'kill_switch' }),
+      { timeout: 5000, interval: 25 },
+    )
+    expect(await instB.harness.exchange.getPositions()).toEqual([])
+  })
+
   it('recovery-idempotency: running recoverOnBoot twice against the same state yields the same outcome', async () => {
     const walPath = await ctx.reset()
     const instA = ctx.bootInstance({ startMs: START_MS, walPath })

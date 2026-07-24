@@ -145,7 +145,16 @@ export const StrategyYamlSchema = z
         max_concurrent_intents: z.int().gt(0),
         max_notional_usd: z.number().gt(0),
         max_daily_loss_usd: z.number().gt(0),
+        // Circuit-breaker knobs (`13` §3, 0380). `breaker_error_threshold` — consecutive
+        // NetworkError/VenueUnavailable that trip the venue-io breaker (already validated).
+        // The three below carry `.default()` so existing YAMLs (which omit them) still parse:
+        // `breaker_cooldown_seconds` — open → half-open probe delay; `breaker_escalation_seconds`
+        // — how long a breaker may stay open before escalating the kill switch to `flatten`;
+        // `breaker_order_reject_threshold` — consecutive order rejects that trip the order breaker.
         breaker_error_threshold: z.int().gte(0),
+        breaker_cooldown_seconds: z.int().gt(0).default(30),
+        breaker_escalation_seconds: z.int().gt(0).default(300),
+        breaker_order_reject_threshold: z.int().gt(0).default(3),
       })
       .strict(),
     symbols: z

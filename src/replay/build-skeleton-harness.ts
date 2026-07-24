@@ -97,6 +97,8 @@ export interface BuildOpts {
   readonly strategyConfig?: RuntimeStrategyConfig
   readonly riskGate?: RiskGate
   readonly killSwitch?: KillSwitch
+  /** Circuit-breaker preflight consultation (`13` §3, 0380); defaults to always-closed. */
+  readonly breakerOpen?: () => boolean
   readonly initialBalance?: Balance
   readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
   readonly onReconciliation?: (record: ReconciliationRecord) => void
@@ -261,6 +263,7 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     strategyConfig,
     riskGate,
     killSwitch,
+    breakerOpen: opts.breakerOpen,
     initialBalance,
     accountSetupComplete: opts.accountSetupComplete,
     onReconciliation,

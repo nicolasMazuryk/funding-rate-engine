@@ -19,6 +19,7 @@ import { Pool } from 'pg'
 import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
+import type { ConsecutiveFailureCounter } from './adapters/shared/errors.js'
 import { createSimExchange } from './adapters/sim/sim-exchange.js'
 import {
   runtimeConfigFromEffective,
@@ -45,15 +46,49 @@ import { recoverOnBoot } from './persistence/recovery.js'
 import { createForwarder } from './persistence/wal/forwarder.js'
 import { createWalFile } from './persistence/wal/wal-file.js'
 import { createLogger } from './replay/logger.js'
+import { type CircuitBreaker, createCircuitBreaker } from './risk/breaker.js'
+import { createBreakerEscalation } from './risk/breaker-escalation.js'
+import { flattenAll } from './risk/flatten.js'
 import { createRiskGate } from './risk/gate.js'
 import { createKillSwitch } from './risk/kill-switch.js'
+import { wireOrderBreakerFeed } from './risk/order-breaker-feed.js'
+import { createOrphanHandler } from './risk/orphan-handler.js'
 
-/** Build the venue adapter for `cfg` — the sim venue when `ADAPTER=sim`, else the Binance adapter. */
-function buildAdapter(cfg: EffectiveConfig, clock: Clock, bus: ReturnType<typeof createEventBus>): ExchangeAdapter {
+/** Reduce-only close retry schedule reused by flatten + the orphan handler (S6's `07` §2 step 2 schedule). */
+const CLOSE_BACKOFFS_MS: readonly number[] = [250, 1000, 3000]
+
+/**
+ * Build the venue adapter for `cfg` — the sim venue when `ADAPTER=sim`, else the Binance adapter.
+ * The venue-io breaker is threaded in as the adapter's `failures` observer so every general-lane
+ * REST call feeds it (`callGeneral` records success/failure).
+ */
+function buildAdapter(
+  cfg: EffectiveConfig,
+  clock: Clock,
+  bus: ReturnType<typeof createEventBus>,
+  failures: ConsecutiveFailureCounter,
+): ExchangeAdapter {
   if (process.env.ADAPTER === 'sim') return createSimExchange(clock, bus)
   const clients = createBinanceClients(cfg.exchangeProfile, cfg.secrets)
   const limiter = createBinanceRateLimiter(cfg.exchangeProfile, clock)
-  return createBinanceAdapter({ client: clients.ccxt, clock, limiter, deny: cfg.symbols.deny })
+  return createBinanceAdapter({ client: clients.ccxt, clock, limiter, deny: cfg.symbols.deny, failures })
+}
+
+/** The two circuit breakers + their timing bounds, read from the validated `config.risk` (`13` §3, 0380). */
+function buildBreakers(
+  risk: Readonly<Record<string, number>>,
+  clock: Clock,
+): { ioBreaker: CircuitBreaker; orderBreaker: CircuitBreaker; escalationMs: number } {
+  const cooldownMs = riskField(risk, 'breaker_cooldown_seconds') * 1000
+  const escalationMs = riskField(risk, 'breaker_escalation_seconds') * 1000
+  const ioBreaker = createCircuitBreaker({ clock, threshold: riskField(risk, 'breaker_error_threshold'), cooldownMs })
+  const orderBreaker = createCircuitBreaker({
+    clock,
+    threshold: riskField(risk, 'breaker_order_reject_threshold'),
+    cooldownMs,
+    counts: (err) => err.kind === 'OrderRejected',
+  })
+  return { ioBreaker, orderBreaker, escalationMs }
 }
 
 /** Read a required numeric `config.risk` field (snake_case) or fail loud (`09` §5 validated it). */
@@ -79,7 +114,10 @@ async function run(): Promise<void> {
 
   const clock = createRealClock()
   const bus = createEventBus()
-  const adapter = buildAdapter(cfg, clock, bus)
+  // Circuit breakers (`13` §3, 0380): the venue-io breaker doubles as the adapter's `failures`
+  // observer; the order breaker is fed from the bus after the engine builds.
+  const { ioBreaker, orderBreaker, escalationMs } = buildBreakers(cfg.risk, clock)
+  const adapter = buildAdapter(cfg, clock, bus, ioBreaker)
 
   // 2. Instrument validation = the adapter's fail-loud `init()` (`10` §4, `09` §5 step 6).
   await createInstrumentValidationHook(adapter).validate(cfg)
@@ -112,6 +150,7 @@ async function run(): Promise<void> {
     strategyConfig: runtimeConfigFromEffective(cfg),
     riskGate,
     killSwitch,
+    breakerOpen: () => ioBreaker.isOpen(), // sole preflight consultation for the venue-io breaker
     initialBalance,
     configHash: cfg.revisionHash,
     onReconciliation: (record) => logger.info({ reconciliation: record }, 'reconciliation'),
@@ -131,6 +170,41 @@ async function run(): Promise<void> {
               : cfg.strategy === 's1-ws'
                 ? wireS1WsEngine(engineDeps, gateDeps)
                 : wireS1Engine(engineDeps)
+
+  // Risk layer (`13` §3/§4, 0380): the order-breaker bus feed + live-intent → paused escalation,
+  // orphan auto-flatten, breaker-open → flatten escalation, and the kill-switch `flatten` → venue
+  // ground-truth flattenAll. Escalation/flatten go through `killSwitch.transition`, which already
+  // WAL-logs + write-throughs (0370) — no new persistence here.
+  const orphanHandler = createOrphanHandler({
+    bus,
+    clock,
+    exchange: adapter,
+    backoffsMs: CLOSE_BACKOFFS_MS,
+    log: (m, meta) => logger.warn(meta ?? {}, m),
+  })
+  const unwireOrderBreaker = wireOrderBreakerFeed({
+    bus,
+    breaker: orderBreaker,
+    killSwitch,
+    hasLiveIntent: () => engine.liveIntentCount() > 0,
+  })
+  const breakerEscalation = createBreakerEscalation({
+    breakers: [ioBreaker, orderBreaker],
+    killSwitch,
+    clock,
+    escalationMs,
+  })
+  const unsubFlatten = killSwitch.subscribe((state) => {
+    if (state === 'flatten') {
+      void flattenAll({
+        exchange: adapter,
+        clock,
+        bus,
+        backoffsMs: CLOSE_BACKOFFS_MS,
+        log: (m, meta) => logger.warn(meta ?? {}, m),
+      })
+    }
+  })
 
   // Derived-fact persistence: mirror bus facts (orders/fills/positions/funding) into
   // Postgres off the hot path (`14` §3, 0360); persist each kill-switch flip too.
@@ -161,6 +235,13 @@ async function run(): Promise<void> {
     scheduler.stop()
     forwarder.stop()
     unsubKillSwitch()
+    // Risk-layer teardown (0380): drop bus subscriptions + cancel breaker/escalation timers.
+    orphanHandler.dispose()
+    unwireOrderBreaker()
+    breakerEscalation.dispose()
+    unsubFlatten()
+    ioBreaker.dispose()
+    orderBreaker.dispose()
     projector.stop()
     engine.dispose()
     await adapter.close().catch(() => {})

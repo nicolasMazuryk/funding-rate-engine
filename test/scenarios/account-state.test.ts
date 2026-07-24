@@ -12,13 +12,27 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { createVirtualClock, type VirtualClock } from '../../src/adapters/clock/virtual-clock.js'
+import { createEventBus } from '../../src/core/events/bus.js'
+import type { Instrument, OrderRequest, Position } from '../../src/core/ports/exchange-adapter.js'
 import { type AccountSetupResult, runAccountSetup } from '../../src/execution/account-setup.js'
 import { createFundingTracker } from '../../src/execution/funding-tracker.js'
 import { createPositionTracker } from '../../src/execution/position-tracker.js'
+import { createOrphanHandler } from '../../src/risk/orphan-handler.js'
 import { buildSkeletonEngine } from '../helpers/build-skeleton-engine.js'
 import { BTC, driveToEntry, INTENT_ID, START_MS } from '../helpers/skeleton-scenario.js'
 import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 import { simHarness } from './sim-harness.js'
+
+const BACKOFFS = [250, 1000, 3000] as const
+
+/** Drive an in-flight async close to resolution on the virtual clock. */
+async function settle(clock: VirtualClock): Promise<void> {
+  for (let i = 0; i < 20; i++) {
+    await Promise.resolve()
+    clock.advanceBy(3000)
+  }
+}
 
 describe('scenario: position reconcile (REST wins) after entry', () => {
   it('corrects a tracker↔venue divergence, venue truth winning', async () => {
@@ -64,6 +78,51 @@ describe('scenario: orphan position (no owning intent)', () => {
       { type: 'OrphanDetected', symbol: 'BTC', qty: 0.005, side: 'short' },
     ])
     tracker.dispose()
+  })
+})
+
+describe('scenario: orphan auto-flatten (0380)', () => {
+  it('closes an orphan reduce-only when OrphanDetected is published', async () => {
+    const h = simHarness()
+    h.sim.setPrice('BTC', 60_000)
+    h.sim.setPosition('BTC', 'long', 0.005, 60_000)
+    const handler = createOrphanHandler({ bus: h.bus, clock: h.clock, exchange: h.sim, backoffsMs: BACKOFFS })
+
+    h.bus.publish({ type: 'OrphanDetected', symbol: 'BTC', qty: 0.005, side: 'long' })
+    await settle(h.clock)
+
+    // The reduce-only close flattened the orphan; a close order (deterministic id) filled.
+    expect(await h.sim.getPositions()).toEqual([])
+    expect(
+      h.events.some(
+        (e) => e.type === 'OrderUpdate' && e.status === 'FILLED' && e.clientOrderId === 'orphan-BTC-flat-1',
+      ),
+    ).toBe(true)
+    handler.dispose()
+  })
+
+  it('alerts (no re-publish) when a stuck orphan survives the retry schedule', async () => {
+    const clock = createVirtualClock(0)
+    const bus = createEventBus()
+    const orphanEvents: string[] = []
+    bus.subscribe((e) => {
+      if (e.type === 'OrphanDetected') orphanEvents.push(e.symbol)
+    })
+    const logs: string[] = []
+    // A venue whose reduce-only close never reduces the position → a genuine residual.
+    const stuck = {
+      getPositions: (): Promise<Position[]> => Promise.resolve([{ symbol: 'BTC', side: 'long', qty: 0.005 }]),
+      placeOrder: (req: OrderRequest) => Promise.resolve({ clientOrderId: req.clientOrderId, accepted: true }),
+      normalize: (): Instrument => ({}) as Instrument,
+    }
+    const handler = createOrphanHandler({ bus, clock, exchange: stuck, backoffsMs: BACKOFFS, log: (m) => logs.push(m) })
+
+    bus.publish({ type: 'OrphanDetected', symbol: 'BTC', qty: 0.005, side: 'long' })
+    await settle(clock)
+
+    expect(logs.some((m) => m.includes('residual'))).toBe(true)
+    expect(orphanEvents).toEqual(['BTC']) // only the original publish — the handler never re-publishes (no loop)
+    handler.dispose()
   })
 })
 

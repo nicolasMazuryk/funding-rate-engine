@@ -129,6 +129,8 @@ export interface Order {
   readonly fillPx?: number
   /** Filled quantity, base units. */
   readonly qty?: number
+  /** Reduce-only flag, when the venue reports it — the pre-entry stale-sweep (`13`, 0380) filters on it. */
+  readonly reduceOnly?: boolean
 }
 
 /** An open position (`getPositions` REST ground truth). */
@@ -240,6 +242,11 @@ export interface ExchangeAdapter {
   cancelOrder(clientOrderId: string): Promise<void>
   /** REST fill-poll. */
   getOrder(clientOrderId: string): Promise<Order>
+  /**
+   * Open (non-terminal) orders, optionally filtered to one normalized `symbol` — the
+   * pre-entry stale reduce-only sweep (`13`, 0380). REST ground truth like {@link getPositions}.
+   */
+  getOpenOrders(symbol?: string): Promise<Order[]>
   /** REST ground truth. */
   getPositions(): Promise<Position[]>
   getBalance(): Promise<Balance>

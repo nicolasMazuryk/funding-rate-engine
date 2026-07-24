@@ -78,8 +78,23 @@ export interface EngineDeps {
   readonly strategyConfig: RuntimeStrategyConfig
   /** Risk gate evaluated in preflight (`13` §1). Defaults to always-allow. */
   readonly riskGate?: RiskGate
-  /** Kill-switch state source read in preflight (`13` §2). Defaults to `off`. */
-  readonly killSwitch?: { state(): KillSwitchState }
+  /**
+   * Kill-switch state source read in preflight (`13` §2). Defaults to `off`. When it carries
+   * `subscribe` (the real {@link ../../risk/kill-switch.js}.KillSwitch, 0380), the engine also
+   * listens for `flatten`: on that transition it fires every MONITORING intent's reduce-only exit
+   * with `exitReason: 'kill_switch_flatten'` so the intent rows reach `CLOSED(kill_switch_flatten)`.
+   */
+  readonly killSwitch?: {
+    state(): KillSwitchState
+    subscribe?(fn: (state: KillSwitchState) => void): Unsubscribe
+  }
+  /**
+   * Circuit-breaker consultation for preflight (`13` §3, 0380) — the venue-io breaker's
+   * `isOpen()`. Consulted **only** at the new-intent entry paths, so a breaker opening
+   * mid-position blocks new entries but never abandons an open one. Defaults to `() => false`
+   * (existing callers/goldens byte-unchanged).
+   */
+  readonly breakerOpen?: () => boolean
   /** Seed balance for the preflight margin check; `undefined` fails closed (no hidden default per fail-loud). */
   readonly initialBalance?: Balance
   /**
@@ -184,6 +199,8 @@ export interface Engine {
   recover(recovered: readonly RecoveredIntent[], snapshots?: readonly TrackerSnapshotRecord[]): Promise<void>
   /** Current FSM state of an intent, or `undefined` if unknown to this engine. */
   intentState(intentId: string): IntentState | undefined
+  /** Count of live (non-terminal) intents — the order-breaker feed's `hasLiveIntent` input (`13` §3, 0380). */
+  liveIntentCount(): number
   /** Advisory cost-model breakdown captured at selection (task 0150), or `undefined` if none. */
   costBreakdown(intentId: string): ProfitBreakdown | undefined
   /** Funding-accrual verdict (`00_globals.md` §3.1) for an intent, or `undefined` if unknown/not yet monitoring. */
@@ -319,6 +336,7 @@ export function createEngine(deps: EngineDeps): Engine {
   const exitSide: Side = entrySide === 'long' ? 'short' : 'long'
   const riskGate: RiskGate = deps.riskGate ?? { check: () => ({ allowed: true }) }
   const killSwitch = deps.killSwitch ?? { state: (): KillSwitchState => 'off' }
+  const breakerOpen: () => boolean = deps.breakerOpen ?? (() => false)
   // Resolve the setup-readiness input to a uniform per-symbol predicate (bool → constant fn).
   const accountSetupReady: (symbol: string) => boolean =
     typeof deps.accountSetupComplete === 'function'
@@ -611,7 +629,7 @@ export function createEngine(deps: EngineDeps): Engine {
     return {
       killSwitch: killSwitch.state(),
       openIntentCount: countLiveIntents(),
-      breakerOpen: false, // hardcoded until circuit breakers land (0380).
+      breakerOpen: breakerOpen(), // venue-io circuit breaker (0380); defaults false.
       amountUsd: strategyConfig.amountUsd,
       leverage: strategyConfig.leverage,
       balance: latestBalance,
@@ -623,9 +641,31 @@ export function createEngine(deps: EngineDeps): Engine {
     }
   }
 
+  /**
+   * Pre-entry stale reduce-only sweep (`13`, 0380): cancel any resting reduce-only order for
+   * `symbol` the engine no longer tracks — a leftover from a crashed prior intent that would
+   * otherwise fight a fresh entry. Fire-and-forget (mirrors `onEntry`'s sync `placeOrder`) and
+   * fail-open: a `getOpenOrders` throw is swallowed, since a reduce-only order can never open a
+   * wrong-direction position. Only untracked orders are swept — a live exit leg stays in
+   * `pendingOrders`, so a concurrent intent's resting reduce-only leg is never cancelled.
+   */
+  function sweepStaleReduceOnly(symbol: string): void {
+    void exchange
+      .getOpenOrders(symbol)
+      .then((orders) => {
+        for (const o of orders) {
+          if (o.reduceOnly !== true || pendingOrders.has(o.clientOrderId)) continue
+          void exchange.cancelOrder(o.clientOrderId).catch(() => {})
+        }
+      })
+      .catch(() => {})
+  }
+
   function onEntry(event: Timer): void {
     const symbol = event.symbol
     if (symbol === undefined) return
+    // Clear any stale reduce-only leftover before this symbol's entry places (`13`, 0380).
+    sweepStaleReduceOnly(symbol)
     // S6 (`07` §2) delegates the whole entry to its sub-machine (PRE_FUNDING → funding-gate → MAIN
     // reversal). Presence of the marker is the switch — every non-S6 strategy is unaffected.
     if (entrySubMachine !== undefined) {
@@ -1415,6 +1455,15 @@ export function createEngine(deps: EngineDeps): Engine {
   }
 
   const unsubscribe: Unsubscribe = bus.subscribe(dispatch)
+  // Kill-switch `flatten` (`13` §3, 0380): terminalize every MONITORING intent through the
+  // existing reduce-only exit path (`fireExit`) so each row reaches CLOSED(kill_switch_flatten).
+  // Only wired when the dep carries `subscribe` (the real KillSwitch); the default source omits it.
+  const killSwitchUnsub: Unsubscribe | undefined = killSwitch.subscribe?.((state) => {
+    if (state !== 'flatten') return
+    for (const [intentId, rec] of [...intents]) {
+      if (rec.state === 'MONITORING') fireExit(intentId, rec, 'kill_switch_flatten')
+    }
+  })
 
   return {
     async recover(
@@ -1438,6 +1487,9 @@ export function createEngine(deps: EngineDeps): Engine {
     intentState(intentId: string): IntentState | undefined {
       return intents.get(intentId)?.state
     },
+    liveIntentCount(): number {
+      return countLiveIntents()
+    },
     costBreakdown(intentId: string): ProfitBreakdown | undefined {
       return intents.get(intentId)?.costBreakdown
     },
@@ -1447,6 +1499,7 @@ export function createEngine(deps: EngineDeps): Engine {
     dispose(): void {
       exitHandler.dispose?.() // release handler-owned resources (the funding gate's timers, S1-WS)
       entrySubMachine?.dispose() // release the S6 entry sub-machine's funding gate timers
+      killSwitchUnsub?.() // stop listening for the kill-switch `flatten` (0380)
       unsubscribe()
     },
   }

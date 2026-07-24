@@ -452,6 +452,25 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
         return Promise.resolve(order)
       })
     },
+    getOpenOrders(symbol?: string): Promise<Order[]> {
+      return guardCall('getOpenOrders', () => {
+        // Resting (OPEN/PARTIAL) orders are the non-terminal ones — carry `reduceOnly` off the
+        // original request so the engine's pre-entry stale-sweep (0380) can filter on it.
+        const open: Order[] = [...restingOrders.values()]
+          .filter((o) => symbol === undefined || o.req.symbol === symbol)
+          .map((o) => ({
+            clientOrderId: o.req.clientOrderId,
+            venueOrderId: o.req.clientOrderId,
+            symbol: o.req.symbol,
+            side: o.req.side,
+            type: o.req.type,
+            status: o.status,
+            qty: o.filledQty,
+            ...(o.req.reduceOnly ? { reduceOnly: true } : {}),
+          }))
+        return Promise.resolve(open)
+      })
+    },
     getPositions(): Promise<Position[]> {
       return guardCall('getPositions', () => Promise.resolve([...positions.values()]))
     },

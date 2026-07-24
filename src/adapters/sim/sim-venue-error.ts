@@ -18,6 +18,7 @@ export type SimCallClass =
   | 'placeOrder'
   | 'cancelOrder'
   | 'getOrder'
+  | 'getOpenOrders'
   | 'getPositions'
   | 'getBalance'
   | 'predictedFunding'
