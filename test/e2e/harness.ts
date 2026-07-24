@@ -19,6 +19,8 @@
 import { drizzle } from 'drizzle-orm/node-postgres'
 import { migrate } from 'drizzle-orm/node-postgres/migrator'
 import { Pool } from 'pg'
+import { createPnlSidecar } from '../../src/accounting/pnl-sidecar.js'
+import type { FeeInputs } from '../../src/core/runtime/cost-model.js'
 import { DEV_INSTANCE } from '../../src/persistence/db/instance.js'
 import { createPgRepo } from '../../src/persistence/db/repo.js'
 import { createPersistenceProjector, type PersistenceProjector } from '../../src/persistence/projector.js'
@@ -28,6 +30,9 @@ import { type BuildOpts, buildSkeletonEngine, type SkeletonHarness } from '../..
 import { type TempDir, tempDir } from '../helpers/temp-dir.js'
 
 const DATABASE_URL = process.env.DATABASE_URL ?? 'postgres://funding:funding@localhost:5432/funding_drop'
+
+/** Fee profile the e2e accounting sidecar books against — fixed so `pnl` assertions are hand-computable. */
+export const E2E_FEES: FeeInputs = { takerFeePct: 0.05, makerFeePct: 0.02 }
 
 /** A projected `intent_wal` row (the two columns the consistency check compares). */
 export interface WalDbRow {
@@ -47,6 +52,8 @@ export interface BootedInstance {
   walRows(intentId: string): Promise<WalDbRow[]>
   /** The local-WAL records for `intentId` (pre-forwarder ground truth). */
   localWal(intentId: string): WalRecord[]
+  /** The `pnl` row for `intentId` (`SELECT *`), or `undefined` — the accounting sidecar's output (0390). */
+  pnlRow(intentId: string): Promise<Record<string, unknown> | undefined>
 }
 
 export interface E2eContext {
@@ -93,7 +100,7 @@ export async function createE2eContext(): Promise<E2eContext> {
       await disposeInstances()
       tmp?.dispose()
       await adminPool.query(
-        'TRUNCATE intents, intent_wal, orders, fills, positions, funding_events, kill_switch, tracker_snapshots',
+        'TRUNCATE intents, intent_wal, orders, fills, positions, funding_events, kill_switch, tracker_snapshots, pnl',
       )
       tmp = tempDir('skeleton-e2e-')
       return tmp.walPath
@@ -102,7 +109,11 @@ export async function createE2eContext(): Promise<E2eContext> {
       const walPath = opts.walPath ?? tmp?.walPath
       if (walPath === undefined) throw new Error('e2e harness: call reset() before bootInstance()')
       const repo = createPgRepo({ pool: newPool(), instance: DEV_INSTANCE })
-      const harness = buildSkeletonEngine({ ...opts, walPath, repo })
+      // Post-trade accounting sidecar (0390): the engine's terminal `onTradeClose` hook books one
+      // `pnl` row per intent, reading the settled funding amount back from `funding_events`.
+      const fees = opts.strategyConfig?.costFees ?? E2E_FEES
+      const sidecar = createPnlSidecar({ repo, fees })
+      const harness = buildSkeletonEngine({ ...opts, walPath, repo, onTradeClose: sidecar.onTradeClose })
       harnesses.push(harness)
       const forwarder = createForwarder({ wal: harness.wal, pool: newPool(), instance: DEV_INSTANCE })
       const projector = createPersistenceProjector({ bus: harness.bus, repo, now: () => harness.clock.now() })
@@ -124,6 +135,10 @@ export async function createE2eContext(): Promise<E2eContext> {
         },
         localWal(intentId): WalRecord[] {
           return harness.wal.readAll().filter((r) => r.intentId === intentId)
+        },
+        async pnlRow(intentId): Promise<Record<string, unknown> | undefined> {
+          const { rows } = await adminPool.query('SELECT * FROM pnl WHERE intent_id = $1', [intentId])
+          return rows[0]
         },
       }
     },

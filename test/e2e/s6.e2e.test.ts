@@ -22,7 +22,7 @@ import {
   SETTLE_RATE,
   START_MS,
 } from '../helpers/s6-scenario.js'
-import { checkWalDbConsistency, expectTerminal, expectTradeRecordShape } from './assertions.js'
+import { checkWalDbConsistency, expectPnlRow, expectTerminal, expectTradeRecordShape } from './assertions.js'
 import { createE2eContext, type E2eContext } from './harness.js'
 
 let ctx: E2eContext
@@ -71,6 +71,12 @@ describe('strategy S6 end-to-end through a full instance', () => {
       SETTLE_RATE,
       12,
     )
+
+    // Accounting (0390): S6 books the full settled charge to `FUNDING_PRE` (`funding_pnl`) — the
+    // conservative default (`07` §2 / `15` §3) — and `net_pnl` sums from its components (identity).
+    await vi.waitFor(async () => expect(await inst.pnlRow(INTENT_ID)).toBeDefined(), { timeout: 5000, interval: 25 })
+    const pnl = expectPnlRow(await inst.pnlRow(INTENT_ID), { exitReason: 'tp_hit' })
+    expect(pnl.funding_pnl).not.toBe(0)
   })
 
   it('funding_event_timeout path: SUBMITTING_ENTRY → NO_POSITION, forwarded consistently', async () => {

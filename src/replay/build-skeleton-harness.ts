@@ -36,7 +36,13 @@ import type { Balance, ExchangeAdapter, TimeRange } from '../core/ports/exchange
 import type { Repo } from '../core/ports/repo.js'
 import type { RiskGate } from '../core/ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../core/ports/transition-log.js'
-import { createEngine, type Engine, type OpsEvent, type ReconciliationRecord } from '../core/runtime/engine.js'
+import {
+  createEngine,
+  type Engine,
+  type OpsEvent,
+  type ReconciliationRecord,
+  type TradeCloseContext,
+} from '../core/runtime/engine.js'
 import { createScheduler, type Scheduler } from '../core/runtime/scheduler.js'
 import {
   createStrategyRegistry,
@@ -104,6 +110,8 @@ export interface BuildOpts {
   readonly onReconciliation?: (record: ReconciliationRecord) => void
   /** Diagnostic ops-event sink (S4.1a `ladder.pre_funding_fill`); defaults to writing an `ops` trace record. */
   readonly onOpsEvent?: (event: OpsEvent) => void
+  /** Post-trade accounting hook (`15` §1, 0390); absent ⇒ no `pnl` rows. The e2e harness wires the sidecar. */
+  readonly onTradeClose?: (ctx: TradeCloseContext) => void
   readonly logger?: Logger
 }
 
@@ -268,6 +276,7 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     accountSetupComplete: opts.accountSetupComplete,
     onReconciliation,
     onOpsEvent,
+    onTradeClose: opts.onTradeClose,
   })
 
   return {

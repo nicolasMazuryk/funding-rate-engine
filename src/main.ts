@@ -16,6 +16,7 @@
 
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
+import { createPnlSidecar } from './accounting/pnl-sidecar.js'
 import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
@@ -140,6 +141,12 @@ async function run(): Promise<void> {
   // `s1` → the `timed` exit; `s1-ws` → the `funding_fee_event` gate; `s2` → the trailing
   // retracement gate. The WS-mandatory guard already ran in `load.ts` (`checkWsMandatoryGuard`),
   // so the WS-gated strategies only reach here validly.
+  // Post-trade accounting (`15` §1, 0390): the sidecar books one `pnl` row per intent close
+  // from the engine's realized-fact hook + the settled `funding_events` amount, off the hot path.
+  const pnlSidecar = createPnlSidecar({
+    repo,
+    fees: { takerFeePct: cfg.exchangeProfile.takerFeePct, makerFeePct: cfg.exchangeProfile.makerFeePct },
+  })
   const engineDeps: S1EngineDeps = {
     bus,
     clock,
@@ -154,6 +161,7 @@ async function run(): Promise<void> {
     initialBalance,
     configHash: cfg.revisionHash,
     onReconciliation: (record) => logger.info({ reconciliation: record }, 'reconciliation'),
+    onTradeClose: pnlSidecar.onTradeClose,
   }
   const gateDeps = { clock, fundingIncome: (symbol: string, range: TimeRange) => adapter.fundingIncome(symbol, range) }
   const engine =

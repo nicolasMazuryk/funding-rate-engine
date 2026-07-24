@@ -16,7 +16,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { createRiskGate } from '../../src/risk/gate.js'
 import { driveToPartialSlExit, S4_1A_RUNTIME_CONFIG } from '../helpers/s4-1a-scenario.js'
 import { INTENT_ID, START_MS } from '../helpers/skeleton-scenario.js'
-import { checkWalDbConsistency, expectTerminal, expectTradeRecordShape } from './assertions.js'
+import { checkWalDbConsistency, expectPnlRow, expectTerminal, expectTradeRecordShape } from './assertions.js'
 import { createE2eContext, type E2eContext } from './harness.js'
 
 let ctx: E2eContext
@@ -60,5 +60,12 @@ describe('strategy S4.1a end-to-end through a full instance', () => {
     ])
     expect(checkWalDbConsistency(inst.localWal(INTENT_ID), dbRows, INTENT_ID).consistent).toBe(true)
     expectTradeRecordShape(await inst.intentRow(INTENT_ID))
+
+    // Accounting (0390): the ladder books off its fill-weighted `P_avg`, one `pnl` row with the
+    // partial fill count; `net_pnl` recomputes from its components (delta + funding − fee identity).
+    await vi.waitFor(async () => expect(await inst.pnlRow(INTENT_ID)).toBeDefined(), { timeout: 5000, interval: 25 })
+    const pnl = await inst.pnlRow(INTENT_ID)
+    expectPnlRow(pnl, { exitReason: 'sl_hit' })
+    expect(Number(pnl?.p_avg)).toBeGreaterThan(0)
   })
 })

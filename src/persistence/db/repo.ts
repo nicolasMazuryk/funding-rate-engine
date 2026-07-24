@@ -6,17 +6,19 @@
  * instances stay isolated inside the one fleet-wide database (`14` §3).
  */
 
-import { and, notInArray } from 'drizzle-orm'
+import { and, eq, gte, lte, notInArray } from 'drizzle-orm'
 import { drizzle } from 'drizzle-orm/node-postgres'
 import type { Pool } from 'pg'
 import { TERMINAL_INTENT_STATES } from '../../core/intent/intent-machine.js'
 import type {
   FillRecord,
+  FundingEventRange,
   FundingEventRecord,
   IntentSnapshot,
   KillSwitchRecord,
   OrderDescriptor,
   OrderStatusUpdate,
+  PnlRecordRow,
   PositionRecord,
   Repo,
   TrackerSnapshotRecord,
@@ -29,6 +31,7 @@ import {
   intents,
   killSwitch,
   orders,
+  pnl,
   positions,
   trackerSnapshots,
 } from './schema.js'
@@ -203,6 +206,51 @@ export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly
     async loadTrackerSnapshots(): Promise<readonly TrackerSnapshotRecord[]> {
       const rows = await db.select().from(trackerSnapshots).where(instanceWhere(trackerSnapshots, instance))
       return rows.map((r) => ({ intentId: r.intentId, snapshot: r.snapshot, updatedTs: r.updatedTs }))
+    },
+
+    async upsertPnl(record: PnlRecordRow): Promise<void> {
+      // Write-once per intent (natural key `intent_id`): the row is booked from realized facts
+      // at close, so a re-delivery is a no-op (`15` §1). 0400 corrects it via a separate path.
+      await db
+        .insert(pnl)
+        .values({
+          ...triple,
+          intentId: record.intentId,
+          pEntry: record.pEntry ?? null,
+          pExit: record.pExit ?? null,
+          pAvg: record.pAvg ?? null,
+          deltaPnl: record.deltaPnl,
+          fundingPnl: record.fundingPnl,
+          feeCost: record.feeCost,
+          netPnl: record.netPnl,
+          exitReason: record.exitReason ?? null,
+          errorCode: record.errorCode ?? null,
+          holdDurationS: record.holdDurationS ?? null,
+          fillCount: record.fillCount,
+          fundingReceived: record.fundingReceived,
+          tDropOffsetS: record.tDropOffsetS ?? null,
+        })
+        .onConflictDoNothing({ target: [pnl.exchange, pnl.strategy, pnl.subaccount, pnl.intentId] })
+    },
+
+    async loadFundingEventsForSymbol(symbol: string, range: FundingEventRange): Promise<readonly FundingEventRecord[]> {
+      const rows = await db
+        .select()
+        .from(fundingEvents)
+        .where(
+          and(
+            instanceWhere(fundingEvents, instance),
+            eq(fundingEvents.symbol, symbol),
+            gte(fundingEvents.fundingTime, range.fromMs),
+            lte(fundingEvents.fundingTime, range.toMs),
+          ),
+        )
+      return rows.map((r) => ({
+        symbol: r.symbol,
+        fundingTime: r.fundingTime,
+        amount: r.amount,
+        rate: r.rate ?? undefined,
+      }))
     },
   }
 }

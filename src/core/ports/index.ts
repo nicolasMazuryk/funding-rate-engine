@@ -28,6 +28,7 @@ export type {
 } from './exchange-adapter.js'
 export type {
   FillRecord,
+  FundingEventRange,
   FundingEventRecord,
   IntentId,
   IntentSnapshot,
@@ -35,6 +36,7 @@ export type {
   KillSwitchRecord,
   OrderDescriptor,
   OrderStatusUpdate,
+  PnlRecordRow,
   PositionRecord,
   Repo,
   TrackerSnapshotRecord,

@@ -22,8 +22,16 @@
  * balance/precision/account/market checks) lands here in 0140.
  */
 
+import type { StrategyId } from '../../config/canonical.js'
 import type { KillSwitchState } from '../../config/env.js'
-import { assertNever, type EngineEvent, type FundingPredicted, type OrderUpdate, type Timer } from '../events/types.js'
+import {
+  assertNever,
+  type EngineEvent,
+  type FundingFeeAccrued,
+  type FundingPredicted,
+  type OrderUpdate,
+  type Timer,
+} from '../events/types.js'
 import type {
   ExitLegRequest,
   ExitPolicyContext,
@@ -113,6 +121,14 @@ export interface EngineDeps {
    */
   readonly onOpsEvent?: (event: OpsEvent) => void
   /**
+   * Post-trade accounting sink (`15` §1, 0390) — fired at every terminal `commit` that ends a
+   * managed lifecycle: `CLOSED` (a position existed) and `NO_POSITION` (none did). Mirrors the
+   * {@link onReconciliation}/{@link onOpsEvent} escape hatches. The sidecar assembles the `pnl`
+   * row from the in-memory {@link TradeCloseContext} projection + a `funding_events` read. Absent
+   * ⇒ the engine emits nothing (existing callers/goldens untouched).
+   */
+  readonly onTradeClose?: (ctx: TradeCloseContext) => void
+  /**
    * Config revision hash (`09` §7) stamped onto every persisted intent (`IntentSnapshot.configHash`)
    * — the fail-loud boot check (0370 `recovery.ts`) compares a recovered intent's stored hash
    * against the *current* boot's before touching the venue. Absent ⇒ `configHash` stays
@@ -180,6 +196,41 @@ export type RecoveredIntent = IntentWalFields & {
   readonly state: IntentState
 }
 
+/**
+ * The realized-fact projection handed to {@link EngineDeps.onTradeClose} at a terminal
+ * `commit` (`15` §1, 0390) — the in-memory `IntentRecord` snapshot the accounting sidecar
+ * turns into a `pnl` row (via `core/accounting/trade-record.ts`). Prices/qty are realized
+ * fills; `settledFundingAmount` is read from `funding_events` by the sidecar, not carried here.
+ */
+export interface TradeCloseContext {
+  readonly intentId: string
+  readonly symbol: string
+  readonly strategyId: StrategyId
+  readonly entrySide: Side
+  /** Set on a CLOSED terminal; absent on NO_POSITION. */
+  readonly exitReason?: ExitReason
+  /** Set on a NO_POSITION terminal; absent on CLOSED. */
+  readonly errorCode?: ErrorCode
+  /** Single-entry fill price (non-ladder). */
+  readonly pEntry?: number
+  /** Closing fill price. */
+  readonly pExit?: number
+  /** Fill-weighted average entry (ladder). */
+  readonly pAvg?: number
+  readonly entryQty: number
+  /** Realized filled qty (ladder aggregate; the reduce-only exit cap). */
+  readonly filledQty?: number
+  /** Number of entry fills (ladder rungs filled; 1 for a single entry, 0 if none). */
+  readonly fillCount: number
+  /** Funding-accrual verdict (`00_globals` §3.1). */
+  readonly fundingReceived: boolean
+  readonly enteredAtMs?: number
+  readonly closedAtMs: number
+  readonly tSettleMs?: number
+  /** `T_drop − T_settle`, seconds; null when no `T_drop` was observed. */
+  readonly tDropOffsetS?: number
+}
+
 /** The reconciliation placeholder's finding: engine fill record vs venue ground truth (`15`, real reconciliation 0400). */
 export interface ReconciliationRecord {
   readonly intentId: string
@@ -232,6 +283,8 @@ interface IntentRecord {
   ratePercent?: number
   /** Settled funding rate at MAIN fill, signed percent — S6's TP/SL `|F|` source (`07` §2 step 4). Set on `→ MONITORING`. */
   settledRatePercent?: number
+  /** `T_drop − T_settle`, seconds (`00_globals` §8.3) — set when the `FundingFeeAccrued` (T_drop) is observed. Accounting only (0390). */
+  tDropOffsetS?: number
   deadlineMs?: number
   /** Exit reason the exit-policy handler commanded (stashed on `→ EXITING`, recorded on `→ CLOSED`). */
   exitReason?: ExitReason
@@ -395,6 +448,10 @@ export function createEngine(deps: EngineDeps): Engine {
   // Engine-side conditional stops (S4.1a), armed at ladder placement, evaluated on every
   // `MarketTick`, disarmed on any exit (`05` §2 step 1). In-memory only (0370 re-derives).
   const conditionalStops = new Map<string, ConditionalStop>()
+  // Last exit-leg fill price per intent — stashed when an exit / exit-policy fill arrives so the
+  // terminal `onTradeClose` hook can book `pExit` without threading it through the OCO close path
+  // (accounting only, 0390; in-memory, never WAL'd).
+  const exitFillPxByIntent = new Map<string, number>()
   const predicted = new Map<string, FundingPredicted>()
   // Settlement instant per symbol, stashed at selection (`onScan`) and read at entry
   // (`onEntry`) — the `timed` exit's anchor, mirroring the `predicted`/`costBySymbol` maps.
@@ -467,6 +524,9 @@ export function createEngine(deps: EngineDeps): Engine {
       dropEntryOrders(intentId)
       const to: IntentState = S6_ENTRY_FAILED_CODES.has(errorCode) ? 'ENTRY_FAILED' : 'NO_POSITION'
       commit({ intentId, symbol: rec.symbol, from: 'SUBMITTING_ENTRY', to, payload: { errorCode } })
+      // Accounting books the NO_POSITION terminal (zero economics); ENTRY_FAILED/ABORTED are not
+      // managed-lifecycle closes, so the hook covers only NO_POSITION (`15` §1, 0390).
+      if (to === 'NO_POSITION') fireTradeClose(intentId, rec, { errorCode })
     },
     emitOps(event): void {
       deps.onOpsEvent?.(event)
@@ -579,6 +639,20 @@ export function createEngine(deps: EngineDeps): Engine {
 
   function onFundingPredicted(event: FundingPredicted): void {
     predicted.set(event.symbol, event)
+  }
+
+  /**
+   * Record the `T_drop − T_settle` offset (`00_globals` §8.3) on every live intent on the symbol
+   * when the venue's `FundingFeeAccrued` (which marks `T_drop`) arrives. Written at source because
+   * the `pnl` row is write-once (0410 cannot backfill a null); an intent with no `settleTs` (no
+   * gate) is left null — spec-legal. Accounting only (0390).
+   */
+  function recordFundingDrop(event: FundingFeeAccrued): void {
+    for (const rec of intents.values()) {
+      if (rec.symbol !== event.symbol || rec.settleTs === undefined) continue
+      if (TERMINAL_INTENT_STATES.includes(rec.state)) continue
+      rec.tDropOffsetS = Math.round((event.fundingTime - rec.settleTs) / 1000)
+    }
   }
 
   function onScan(event: Timer): void {
@@ -982,14 +1056,55 @@ export function createEngine(deps: EngineDeps): Engine {
     return clientOrderId
   }
 
-  /** Record `→ CLOSED`, sweep any sibling reduce-only legs, and reconcile — the shared exit tail. */
+  /** Record `→ CLOSED`, sweep any sibling reduce-only legs, reconcile, and book the trade — the shared exit tail. */
   function closeFromExiting(intentId: string, rec: IntentRecord, exitReason: ExitReason): void {
     conditionalStops.delete(intentId) // disarm the engine-side SL (idempotent with fireExit)
     commit({ intentId, symbol: rec.symbol, from: 'EXITING', to: 'CLOSED', payload: { exitReason } })
     // Post-exit reduce-only sweep (`00_globals.md` §5.2, `01` §2 step 5): cancel the sibling
     // legs still tracked open for this symbol (S2's SL/TP OCO); no-op on S1's market-exit path.
     sweepReduceOnlyOrders(intentId, rec.symbol)
+    fireTradeClose(intentId, rec, { pExit: exitFillPxByIntent.get(intentId) })
+    exitFillPxByIntent.delete(intentId)
     void finishReconciliation(intentId)
+  }
+
+  /**
+   * Emit the terminal accounting projection to {@link EngineDeps.onTradeClose} (`15` §1, 0390).
+   * Fired at every managed-lifecycle terminal (`CLOSED` / `NO_POSITION`); `pExit` rides on `CLOSED`,
+   * `errorCode` on `NO_POSITION`. Absent-hook ⇒ no-op (existing callers untouched).
+   */
+  function fireTradeClose(
+    intentId: string,
+    rec: IntentRecord,
+    outcome: { readonly pExit?: number; readonly errorCode?: ErrorCode },
+  ): void {
+    if (deps.onTradeClose === undefined) return
+    const isLadder = rec.ladderRungs !== undefined
+    const fillCount = isLadder
+      ? (rec.ladderRungs?.filter((r) => r.filled).length ?? 0)
+      : rec.entryFillQty !== undefined
+        ? 1
+        : 0
+    deps.onTradeClose({
+      intentId,
+      symbol: rec.symbol,
+      strategyId: strategyConfig.id,
+      entrySide: rec.entrySide,
+      exitReason: rec.exitReason,
+      errorCode: outcome.errorCode,
+      // A ladder books its fill-weighted `P_avg`; a single entry books `P_entry`.
+      pEntry: isLadder ? undefined : rec.entryFillPx,
+      pExit: outcome.pExit,
+      pAvg: isLadder ? rec.entryFillPx : undefined,
+      entryQty: rec.entryQty,
+      filledQty: rec.entryFillQty,
+      fillCount,
+      fundingReceived: rec.fundingReceived ?? false,
+      enteredAtMs: rec.enteredAtMs,
+      closedAtMs: clock.now(),
+      tSettleMs: rec.settleTs,
+      tDropOffsetS: rec.tDropOffsetS,
+    })
   }
 
   /**
@@ -1048,14 +1163,10 @@ export function createEngine(deps: EngineDeps): Engine {
   function terminateLadderNoFills(intentId: string, rec: IntentRecord): void {
     conditionalStops.delete(intentId)
     sweepReduceOnlyOrders(intentId, rec.symbol) // cancels the unfilled entry rungs (no exit legs exist yet)
-    commit({
-      intentId,
-      symbol: rec.symbol,
-      from: 'SUBMITTING_ENTRY',
-      to: 'NO_POSITION',
-      // S4.2a's no-fill terminal is `limit_expired` (`06` §2 R5); every other ladder is `ladder_no_fills`.
-      payload: { errorCode: activeModule.entryExpiryErrorCode ?? 'ladder_no_fills' },
-    })
+    // S4.2a's no-fill terminal is `limit_expired` (`06` §2 R5); every other ladder is `ladder_no_fills`.
+    const errorCode = activeModule.entryExpiryErrorCode ?? 'ladder_no_fills'
+    commit({ intentId, symbol: rec.symbol, from: 'SUBMITTING_ENTRY', to: 'NO_POSITION', payload: { errorCode } })
+    fireTradeClose(intentId, rec, { errorCode })
   }
 
   /** Adopt an entry fill (real update or recovered-and-confirmed): record it and advance to `MONITORING`. */
@@ -1212,6 +1323,7 @@ export function createEngine(deps: EngineDeps): Engine {
   function onExitOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
     if (event.status !== 'FILLED') return
     pendingOrders.delete(event.clientOrderId)
+    if (event.fillPx !== undefined) exitFillPxByIntent.set(intentId, event.fillPx) // pExit for accounting (0390)
     // The exit reason was stashed by the exit-policy handler on `→ EXITING`; a fill
     // with none recorded is a broken invariant, not a default (fail loud).
     const exitReason = rec.exitReason
@@ -1222,6 +1334,9 @@ export function createEngine(deps: EngineDeps): Engine {
   /** Route an update on a handler-owned resting leg (S2's SL/TP) to the exit policy; a fill drives the OCO close. */
   function onExitPolicyOrderUpdate(event: OrderUpdate, intentId: string, rec: IntentRecord): void {
     if (rec.state !== 'MONITORING') return
+    // Stash the OCO leg's fill price before the handler drives the close (`confirmClose` carries no
+    // px) so the terminal `onTradeClose` books `pExit` (accounting, 0390).
+    if (event.status === 'FILLED' && event.fillPx !== undefined) exitFillPxByIntent.set(intentId, event.fillPx)
     exitHandler.onOrderUpdate?.(event, toMonitoredIntent(intentId, rec), strategyConfig, exitCtx)
   }
 
@@ -1294,6 +1409,7 @@ export function createEngine(deps: EngineDeps): Engine {
         return
       // The funding-fee accrual is a MONITORING event — route it through the exit policy.
       case 'FundingFeeAccrued':
+        recordFundingDrop(event)
         dispatchToExitPolicy(event)
         // For S6 it is also an *entry* trigger: the gate that fires MAIN opens on this event while the
         // intent is still `SUBMITTING_ENTRY` (`07` §2 step 3). The gate matches per-symbol + is idempotent.

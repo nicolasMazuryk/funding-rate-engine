@@ -15,7 +15,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { driveToTpExit, S2_RUNTIME_CONFIG } from '../helpers/s2-scenario.js'
 import { INTENT_ID, START_MS } from '../helpers/skeleton-scenario.js'
-import { checkWalDbConsistency, expectTerminal, expectTradeRecordShape } from './assertions.js'
+import { checkWalDbConsistency, expectPnlRow, expectTerminal, expectTradeRecordShape } from './assertions.js'
 import { createE2eContext, type E2eContext } from './harness.js'
 
 let ctx: E2eContext
@@ -58,5 +58,11 @@ describe('strategy S2 end-to-end through a full instance', () => {
 
     const monitoring = inst.localWal(INTENT_ID).find((r) => r.toState === 'MONITORING')
     expect((monitoring?.payload as { fundingReceived?: boolean } | undefined)?.fundingReceived).toBe(true)
+
+    // Accounting (0390): entry accrued, so `funding_pnl` is the venue-settled amount (exchange-
+    // sourced, ≠ `|F|`); `net_pnl` recomputes from its components. S2's tp_hit exit is a maker leg.
+    await vi.waitFor(async () => expect(await inst.pnlRow(INTENT_ID)).toBeDefined(), { timeout: 5000, interval: 25 })
+    const pnl = expectPnlRow(await inst.pnlRow(INTENT_ID), { exitReason: 'tp_hit' })
+    expect(pnl.funding_pnl).not.toBe(0)
   })
 })

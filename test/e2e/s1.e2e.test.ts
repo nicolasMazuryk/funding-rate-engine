@@ -14,7 +14,7 @@
 
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { INTENT_ID, runSkeletonScenario, START_MS } from '../helpers/skeleton-scenario.js'
-import { checkWalDbConsistency, expectTerminal, expectTradeRecordShape } from './assertions.js'
+import { checkWalDbConsistency, expectPnlRow, expectTerminal, expectTradeRecordShape } from './assertions.js'
 import { createE2eContext, type E2eContext } from './harness.js'
 
 let ctx: E2eContext
@@ -60,5 +60,12 @@ describe('strategy S1 end-to-end through a full instance', () => {
     // T_settle on the happy path → true.
     const monitoring = inst.localWal(INTENT_ID).find((r) => r.toState === 'MONITORING')
     expect((monitoring?.payload as { fundingReceived?: boolean } | undefined)?.fundingReceived).toBe(true)
+
+    // Accounting sidecar (0390): the `pnl` row is booked from realized facts. This scenario scripts
+    // no `FundingSettled`/`FundingFeeAccrued`, so the venue recorded no funding — `funding_pnl` is 0
+    // (booked from venue truth, never `|F|`-derived). `net_pnl` recomputes from its components.
+    await vi.waitFor(async () => expect(await inst.pnlRow(INTENT_ID)).toBeDefined(), { timeout: 5000, interval: 25 })
+    const pnl = expectPnlRow(await inst.pnlRow(INTENT_ID), { exitReason: 'timed', fillCount: 1 })
+    expect(pnl.funding_pnl).toBe(0)
   })
 })

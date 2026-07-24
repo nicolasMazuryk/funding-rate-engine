@@ -104,6 +104,35 @@ export interface KillSwitchRecord {
   readonly updatedTs: number
 }
 
+/** A time range for a bounded funding-event read, epoch ms UTC (inclusive). */
+export interface FundingEventRange {
+  readonly fromMs: number
+  readonly toMs: number
+}
+
+/**
+ * One `pnl` row's value set (`00_globals` §8.3; task 0390). Value columns are
+ * **quote currency** (deliberate §8.3 deviation, user decision — see
+ * `core/accounting/trade-record.ts`). The instance triple is added by the repo.
+ * Natural key: `intentId`. Structurally matches `PnlRecord` from the assembler.
+ */
+export interface PnlRecordRow {
+  readonly intentId: string
+  readonly pEntry?: number
+  readonly pExit?: number
+  readonly pAvg?: number
+  readonly deltaPnl: number
+  readonly fundingPnl: number
+  readonly feeCost: number
+  readonly netPnl: number
+  readonly exitReason?: string
+  readonly errorCode?: string
+  readonly holdDurationS?: number
+  readonly fillCount: number
+  readonly fundingReceived: boolean
+  readonly tDropOffsetS?: number
+}
+
 /** S2 tracker snapshot (storage only; write wiring is 0370). Natural key `intentId`. */
 export interface TrackerSnapshotRecord {
   readonly intentId: string
@@ -141,4 +170,8 @@ export interface Repo {
   upsertTrackerSnapshot?(snapshot: TrackerSnapshotRecord): Promise<void>
   /** Load all tracker snapshots for the instance (consumed by 0370 respawn). */
   loadTrackerSnapshots?(): Promise<readonly TrackerSnapshotRecord[]>
+  /** Write one post-trade `pnl` row (idempotent, natural key `intentId`; `15` §1, 0390). */
+  upsertPnl?(record: PnlRecordRow): Promise<void>
+  /** Load the instance's settled funding events for a symbol within a time range (accounting sidecar; 0390). */
+  loadFundingEventsForSymbol?(symbol: string, range: FundingEventRange): Promise<readonly FundingEventRecord[]>
 }
