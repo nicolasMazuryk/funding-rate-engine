@@ -119,6 +119,8 @@ export interface BinanceAdapterDeps {
   readonly wsOrderRestFallback?: boolean
   /** Shared breaker observer (0200): the order manager's fill-poll `getOrder` errors feed it. */
   readonly failures?: ConsecutiveFailureCounter
+  /** Structured-log callback (`main.ts` wires `logger.warn`); no-op when absent (offline tests unaffected). */
+  readonly log?: (msg: string, meta?: Record<string, unknown>) => void
 }
 
 /** ccxt reports funding as a fraction (`0.0001`); the engine speaks signed percent (`0.01`). */
@@ -151,6 +153,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   const { client, clock, limiter, ws, wsPrivate, bus, wsApiPrivate, restOrders } = deps
   const deny = deps.deny ?? []
   const failures = deps.failures ?? createConsecutiveFailureCounter()
+  const log = deps.log ?? (() => {})
 
   // `clientOrderId → venueSymbol`, populated by the private stream's `ORDER_TRADE_UPDATE`
   // handler so `getOrder` can supply the symbol Binance REST requires. 0230 `placeOrder`
@@ -170,10 +173,15 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
       failures.recordSuccess() // a successful venue read closes/heals the circuit breaker (0380)
       return result
     } catch (err) {
-      const mapped = mapBinanceError(err)
+      const mapped = mapErr(err)
       failures.record(mapped) // consecutive NetworkError/VenueUnavailable trips the breaker (0380)
       throw mapped
     }
+  }
+
+  /** Map a venue throw, logging an unmapped code so a wrong assumption about it is observable. */
+  function mapErr(err: unknown): ReturnType<typeof mapBinanceError> {
+    return mapBinanceError(err, { onUnknown: (rawCode) => log('binance: unmapped venue error code', { rawCode }) })
   }
 
   /**
@@ -188,7 +196,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     try {
       return await fn()
     } catch (err) {
-      throw mapBinanceError(err)
+      throw mapErr(err)
     }
   }
 
@@ -220,7 +228,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
   async function reloadRegistry(): Promise<void> {
     const markets = await callGeneral(WEIGHT_LOAD_MARKETS, () => client.loadMarkets())
     const intervals = await readFundingIntervals()
-    const next = buildInstrumentRegistry(Object.values(markets), deny, intervals)
+    const next = buildInstrumentRegistry(Object.values(markets), deny, intervals, log)
     const reverse = new Map<string, string>()
     for (const inst of next.values()) reverse.set(inst.venueSymbol, inst.normalized)
     instruments = next
@@ -459,6 +467,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
             venueForClientId,
             getOrder: readOrder,
             callOrder,
+            log,
           }),
           clock,
           bus,

@@ -1336,8 +1336,8 @@ export function createEngine(deps: EngineDeps): Engine {
 
   /**
    * Cancel reduce-only (exit-leg) orders the engine still tracks open for `symbol`.
-   * Engine-tracked only: a venue-side sweep needs a `getOpenOrders` port the adapter
-   * interface lacks (logged as a SUGGESTION); full stale-sweep-before-entry is 0380.
+   * Intentionally engine-tracked only; the venue-side sweep against `getOpenOrders`
+   * lives in `sweepStaleReduceOnly` (0380).
    */
   function sweepReduceOnlyOrders(intentId: string, symbol: string): void {
     for (const [clientOrderId, pending] of [...pendingOrders]) {

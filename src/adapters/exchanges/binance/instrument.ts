@@ -119,16 +119,19 @@ export function filterMarkets(
  * variant of the same ticker (e.g. `CATUSDT` and `1000CATUSDT`, distinct projects),
  * which both fold to `CAT`. Aborting the venue on that is wrong (it would never
  * start), so the **plain (lowest-multiplier) listing wins**, deterministically
- * regardless of ccxt ordering; the folded duplicate is dropped. This is a known
- * ambiguity flagged for a real disambiguation policy (STATUS/SUGGESTIONS).
+ * regardless of ccxt ordering; the folded duplicate is dropped and logged. Real
+ * per-venue disambiguation (keep both under distinct canonical names / alias map)
+ * is a still-open policy question (STATUS/SUGGESTIONS).
  *
  * `intervalHoursByVenueSymbol` — the `fapi/v1/fundingInfo` read (SUGGESTIONS L13),
  * keyed by venue symbol; absent entries fall back to `market.info`/8h per market.
+ * `log` — structured-log callback for a dropped collision; no-op when absent.
  */
 export function buildInstrumentRegistry(
   markets: readonly (MarketInterface | undefined)[],
   deny: readonly string[] = [],
   intervalHoursByVenueSymbol?: ReadonlyMap<string, number>,
+  log?: (msg: string, meta?: Record<string, unknown>) => void,
 ): Map<string, Instrument> {
   const registry = new Map<string, Instrument>()
   const chosenMultiplier = new Map<string, number>()
@@ -139,7 +142,15 @@ export function buildInstrumentRegistry(
     )
     const multiplier = normalizeSymbol(market.base).multiplier
     const existing = chosenMultiplier.get(instrument.normalized)
-    if (existing !== undefined && multiplier >= existing) continue // keep the plainer listing
+    if (existing !== undefined && multiplier >= existing) {
+      log?.('binance: dropped colliding instrument listing', {
+        normalized: instrument.normalized,
+        venueSymbol: instrument.venueSymbol,
+        keptMultiplier: existing,
+        droppedMultiplier: multiplier,
+      })
+      continue // keep the plainer listing
+    }
     chosenMultiplier.set(instrument.normalized, multiplier)
     registry.set(instrument.normalized, instrument)
   }

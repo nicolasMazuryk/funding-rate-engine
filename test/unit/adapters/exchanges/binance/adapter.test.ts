@@ -1,5 +1,5 @@
 import type { Balances, FundingRate, FundingRateHistory, FundingRates, Order, Position, Ticker } from 'ccxt'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createBinanceAdapter } from '../../../../../src/adapters/exchanges/binance/adapter.js'
 import type { BinanceMarketClient } from '../../../../../src/adapters/exchanges/binance/factory.js'
@@ -198,6 +198,20 @@ describe('createBinanceAdapter', () => {
     expect(() => adapter.streams.public.subscribeTicks(['BTC'])).toThrow(/public stream requires ws\+bus deps/)
     // Private stream likewise fails loud without wsPrivate+bus (implemented, not a NotImplemented stub).
     expect(() => adapter.streams.private.subscribe()).toThrow(/private stream requires wsPrivate\+bus deps/)
+  })
+
+  it('logs an unmapped venue error code via the injected log callback (SUGGESTIONS L14)', async () => {
+    const clock = createVirtualClock(0)
+    const { client } = makeClient(['clean-perp-btc'])
+    client.fetchBalance = () => Promise.reject(Object.assign(new Error('mystery venue error'), { code: -9999 }))
+    const limiter = { acquire: () => Promise.resolve() }
+    const log = vi.fn()
+    const adapter = createBinanceAdapter({ client, clock, limiter, log })
+    await adapter.init()
+
+    await expect(adapter.getBalance()).rejects.toMatchObject({ kind: 'NetworkError' })
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith('binance: unmapped venue error code', { rawCode: -9999 })
   })
 })
 

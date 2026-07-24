@@ -35,6 +35,7 @@ Overall goal and build order: `docs/specs/0000_agentic-development-environment.m
 | `npm run test` | `vitest run` |
 | `npm run test:integration` | `vitest run --config vitest.integration.config.ts` (needs Docker Postgres; not part of `verify`) |
 | `npm run replay -- <trace> [--expect <golden>] [--json]` | replay a recorded trace through the core, no live venue needed (task 0170) |
+| `npm run analytics -- [--json] [--exchange\|--strategy\|--subaccount <id>] [--from\|--to <ms>]` | read-only trade analytics + fleet rollup over the shared DB (`15` §4/§5, task 0410); needs `DATABASE_URL`, no venue credentials |
 | `npm start` | boot an instance (composition root `src/main.ts`); fail-loud startup (`09` §5), clean SIGTERM shutdown |
 | `ADAPTER=sim npm start` | dev smoke (task 0280): boot against the credential-free sim venue, no live orders — used to verify boot + SIGTERM without creds. `ADAPTER` defaults to `binance` |
 

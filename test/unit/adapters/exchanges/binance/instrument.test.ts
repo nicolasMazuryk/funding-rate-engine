@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildInstrumentRegistry,
   ccxtMarketToInstrument,
@@ -121,5 +121,23 @@ describe('buildInstrumentRegistry', () => {
     expect(multiFirst.get('CAT')?.venueSymbol).toBe('CATUSDT')
     expect(plainFirst.size).toBe(1)
     expect(multiFirst.size).toBe(1)
+  })
+
+  it('logs the dropped listing on a collision (SUGGESTIONS L12)', () => {
+    const log = vi.fn()
+    const registry = buildInstrumentRegistry(
+      [loadMarket('plain-cat'), loadMarket('multiplier-cat')],
+      [],
+      undefined,
+      log,
+    )
+    expect(registry.get('CAT')?.venueSymbol).toBe('CATUSDT')
+    expect(log).toHaveBeenCalledTimes(1)
+    expect(log).toHaveBeenCalledWith('binance: dropped colliding instrument listing', {
+      normalized: 'CAT',
+      venueSymbol: '1000CATUSDT',
+      keptMultiplier: 1,
+      droppedMultiplier: 1000,
+    })
   })
 })

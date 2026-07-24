@@ -74,6 +74,8 @@ export interface BinanceOrderTransportDeps {
   readonly callOrder: <T>(weight: number, fn: () => Promise<T>) => Promise<T>
   /** Override the WS ack timeout (tests); defaults to {@link WS_ACK_TIMEOUT_MS}. */
   readonly wsAckTimeoutMs?: number
+  /** Structured-log callback for an unmapped venue error code (mirrors `adapter.ts`'s `callGeneral`/`callOrder`). */
+  readonly log?: (msg: string, meta?: Record<string, unknown>) => void
 }
 
 /**
@@ -139,6 +141,12 @@ function toRestOrder(req: OrderRequest): NewFuturesOrderParams {
 export function createBinanceOrderTransport(deps: BinanceOrderTransportDeps): OrderTransport {
   const { wsApi, rest, clock, resolveVenue, recordVenue, venueForClientId, getOrder, callOrder } = deps
   const ackTimeoutMs = deps.wsAckTimeoutMs ?? WS_ACK_TIMEOUT_MS
+  const log = deps.log ?? (() => {})
+
+  /** Map a venue throw, logging an unmapped code (mirrors `adapter.ts`'s `mapErr`). */
+  function mapErr(err: unknown): ReturnType<typeof mapBinanceError> {
+    return mapBinanceError(err, { onUnknown: (rawCode) => log('binance: unmapped venue error code', { rawCode }) })
+  }
 
   /** Race a WS promise against a Clock timer that rejects `WsTimeoutError` (the lib has none). */
   function withTimeout<T>(p: Promise<T>): Promise<T> {
@@ -197,7 +205,7 @@ export function createBinanceOrderTransport(deps: BinanceOrderTransportDeps): Or
       try {
         venue = venueForClientId(clientOrderId)
       } catch (err) {
-        return Promise.reject(err instanceof NotFoundError ? err : mapBinanceError(err))
+        return Promise.reject(err instanceof NotFoundError ? err : mapErr(err))
       }
       return callOrder(WEIGHT_WS_CANCEL, async () => {
         try {

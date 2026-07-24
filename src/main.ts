@@ -70,11 +70,19 @@ function buildAdapter(
   clock: Clock,
   bus: ReturnType<typeof createEventBus>,
   failures: ConsecutiveFailureCounter,
+  logger: ReturnType<typeof createLogger>,
 ): ExchangeAdapter {
   if (process.env.ADAPTER === 'sim') return createSimExchange(clock, bus)
   const clients = createBinanceClients(cfg.exchangeProfile, cfg.secrets)
   const limiter = createBinanceRateLimiter(cfg.exchangeProfile, clock)
-  return createBinanceAdapter({ client: clients.ccxt, clock, limiter, deny: cfg.symbols.deny, failures })
+  return createBinanceAdapter({
+    client: clients.ccxt,
+    clock,
+    limiter,
+    deny: cfg.symbols.deny,
+    failures,
+    log: (m, meta) => logger.warn(meta ?? {}, m),
+  })
 }
 
 /** The two circuit breakers + their timing bounds, read from the validated `config.risk` (`13` §3, 0380). */
@@ -120,7 +128,7 @@ async function run(): Promise<void> {
   // Circuit breakers (`13` §3, 0380): the venue-io breaker doubles as the adapter's `failures`
   // observer; the order breaker is fed from the bus after the engine builds.
   const { ioBreaker, orderBreaker, escalationMs } = buildBreakers(cfg.risk, clock)
-  const adapter = buildAdapter(cfg, clock, bus, ioBreaker)
+  const adapter = buildAdapter(cfg, clock, bus, ioBreaker, logger)
 
   // 2. Instrument validation = the adapter's fail-loud `init()` (`10` §4, `09` §5 step 6).
   await createInstrumentValidationHook(adapter).validate(cfg)
