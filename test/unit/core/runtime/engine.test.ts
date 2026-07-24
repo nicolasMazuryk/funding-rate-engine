@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { EngineEvent, Timer } from '../../../../src/core/events/types.js'
-import type { ReconciliationRecord } from '../../../../src/core/runtime/engine.js'
 import { createRiskGate } from '../../../../src/risk/gate.js'
 import { buildSkeletonEngine, type SkeletonHarness } from '../../../helpers/build-skeleton-engine.js'
 import { harnessPool } from '../../../helpers/harness-pool.js'
@@ -39,8 +38,7 @@ afterEach(() => {
 describe('engine — happy path', () => {
   it('drives SELECTED → … → CLOSED{timed} for the triggering symbol', async () => {
     const repo = createInMemoryRepo()
-    const reconciliations: ReconciliationRecord[] = []
-    const h = build({ walPath, repo, onReconciliation: (r) => reconciliations.push(r) })
+    const h = build({ walPath, repo })
 
     runSkeletonScenario(h)
     const intentId = INTENT_ID
@@ -53,17 +51,6 @@ describe('engine — happy path', () => {
     expect(snapshot?.state).toBe('CLOSED')
     expect(snapshot?.exitReason).toBe('timed')
 
-    // Reconciliation stub ran and matched engine fill vs venue. Real sizing:
-    // amountUsd 60 / BTC price 60 000 / lot 0.001 → qty 0.001.
-    expect(reconciliations).toEqual([
-      {
-        intentId,
-        symbol: BTC.symbol,
-        engineQty: 0.001,
-        venueQty: 0.001,
-        match: true,
-      },
-    ])
     // Position accrued funding: the entry filled before T_settle (`00_globals.md` §3.1).
     expect(h.engine.fundingReceived(intentId)).toBe(true)
   })

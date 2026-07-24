@@ -71,6 +71,12 @@ export interface TradeFacts {
   /** `T_drop − T_settle`, seconds; null when the intent never observed a `T_drop`. */
   readonly tDropOffsetS?: number
   readonly fees: FeeInputs
+  /**
+   * Venue-corrected fee cost, quote ccy (positive), used verbatim as `feeCost` in place of the
+   * config-percent derivation — the reconciliation fee-divergence correction (`15` §2, 0400).
+   * Default-absent ⇒ every existing caller/golden derives fees from `fees` unchanged.
+   */
+  readonly feeCostOverride?: number
   // ── S6 two-leg fields (`07` §2). Absent for every other strategy. ──
   /** PRE_FUNDING leg fill price, quote ccy. */
   readonly preFillPx?: number
@@ -237,7 +243,11 @@ export function assembleTradeRecord(facts: TradeFacts): PnlRecord {
   }
   const assembler = ASSEMBLERS.get(facts.strategyId)
   if (assembler === undefined) throw new Error(`trade-record: no assembler for strategy '${facts.strategyId}'`)
-  const { deltaPnl, fundingPnl, feeCost: fee } = assembler(facts)
+  const { deltaPnl, fundingPnl, feeCost: derivedFee } = assembler(facts)
+  // Reconciliation (0400) re-runs this over venue-corrected facts: a `feeCostOverride` books the
+  // venue's realized fee verbatim (venue is truth for money, `15` §2) in place of the config-percent
+  // geometry; `netPnl` stays `deltaPnl + fundingPnl − feeCost` by construction.
+  const fee = facts.feeCostOverride ?? derivedFee
   return {
     ...shared,
     pEntry: facts.pEntry,

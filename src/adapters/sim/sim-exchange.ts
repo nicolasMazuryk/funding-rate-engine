@@ -97,6 +97,12 @@ export interface SimExchange extends ExchangeAdapter {
   delayFundingFee(ms: number): void
   /** Swallow the next `FundingFeeAccrued` entirely (absent funding fee). */
   dropFundingFee(): void
+  /**
+   * Report a **divergent** realized fee on `getOrder(clientOrderId)`, overriding the default
+   * taker-fee model — the fee-divergence reconciliation scenario (`15` §2, 0400). Mirrors the
+   * `dropFundingFee` fault idiom: opt-in per scenario, keyed on the order, never randomness.
+   */
+  scriptOrderFee(clientOrderId: string, fee: number): void
   /** Drop every private-lane event emitted while `clock.now()` is within `[fromTs, toTs]`. */
   disconnectPrivate(fromTs: number, toTs: number): void
   /** Drop every public-lane event emitted while `clock.now()` is within `[fromTs, toTs]`. */
@@ -145,6 +151,9 @@ function seedInstruments(): Map<string, Instrument> {
   return new Map(list.map((i) => [i.normalized, i]))
 }
 
+/** Default taker fee the sim books on a fill (percent of notional), when no divergent fee is scripted (`00_globals.md` §4). */
+const SIM_TAKER_FEE_PCT = 0.04
+
 /** True when `value` is not an integer multiple of `step` (tolerant of float error). */
 function offGrid(value: number, step: number): boolean {
   const q = value / step
@@ -158,6 +167,8 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
   const orders = new Map<string, Order>()
   const restingOrders = new Map<string, RestingOrder>()
   const partialScripts = new Map<string, number[]>()
+  /** Scripted divergent fees by clientOrderId (fee-divergence fault, 0400); default is the taker-fee model. */
+  const feeOverrides = new Map<string, number>()
   const predicted = new Map<string, Rate>()
   const history = new Map<string, FundingEvent[]>()
   // Funding-income ledger — the REST ground truth the funding gate polls (task 0290). Written
@@ -243,6 +254,13 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
     return capReduceOnlyQty(requestedQty, reducible)
   }
 
+  /** Realized fee for a fill: the scripted divergent fee if set, else `taker% × notional` (quote ccy). */
+  function fillFee(req: OrderRequest, fillPx: number, qty: number): number {
+    const override = feeOverrides.get(req.clientOrderId)
+    if (override !== undefined) return override
+    return (SIM_TAKER_FEE_PCT / 100) * fillPx * qty * normalize(req.symbol).contractSize
+  }
+
   function recordOrder(req: OrderRequest, status: Order['status'], fillPx?: number, qty?: number): void {
     orders.set(req.clientOrderId, {
       clientOrderId: req.clientOrderId,
@@ -253,6 +271,8 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
       status,
       fillPx,
       qty,
+      // A realized fill carries the venue fee (reconciliation fills-dimension, 0400); resting/rejected legs don't.
+      ...(fillPx !== undefined && qty !== undefined && qty > 0 ? { fee: fillFee(req, fillPx, qty) } : {}),
     })
   }
 
@@ -598,6 +618,12 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
     },
     dropFundingFee(): void {
       emitter.addRule({ matches: (e) => e.type === 'FundingFeeAccrued', action: 'drop', count: 1 })
+    },
+    scriptOrderFee(clientOrderId: string, fee: number): void {
+      feeOverrides.set(clientOrderId, fee)
+      // If the order already filled and recorded, patch its stored fee so a later `getOrder` sees the divergence.
+      const existing = orders.get(clientOrderId)
+      if (existing) orders.set(clientOrderId, { ...existing, fee })
     },
     disconnectPrivate(fromTs: number, toTs: number): void {
       emitter.addRule({

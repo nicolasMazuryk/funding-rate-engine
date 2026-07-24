@@ -10,8 +10,8 @@
  * Nullable columns: upstream producers of `t_settle_ms` (scheduler) and
  * `config_hash` (`09` config system, 0100) don't exist yet, and terminal
  * `exit_reason`/`error_code` are set only on terminal transitions — all
- * nullable for now, sharpened as those producers land. `pnl`/`reconciliation`
- * are created here with no row producer (deferred to 0390/0400).
+ * nullable for now, sharpened as those producers land. `pnl` is written by the
+ * accounting sidecar (0390); `reconciliation` by the reconciler (0400).
  */
 
 import { and, eq } from 'drizzle-orm'
@@ -40,6 +40,9 @@ import type { Instance } from './instance.js'
  */
 export const exitReasonEnum = pgEnum('exit_reason', [...EXIT_REASONS] as [string, ...string[]])
 export const errorCodeEnum = pgEnum('error_code', [...ERROR_CODES] as [string, ...string[]])
+
+/** The engine↔venue dimensions the reconciler diffs (`15` §2, 0400); balance deferred to SUGGESTIONS. */
+export const reconDimensionEnum = pgEnum('recon_dimension', ['fills', 'position', 'funding'])
 
 /** One row per intent: current FSM state + identity, scoped by instance (`14` §3). */
 export const intents = pgTable(
@@ -279,9 +282,11 @@ export const killSwitch = pgTable(
 )
 
 /**
- * Engine-vs-venue reconciliation results (`15` §recon). Table created now; **no
- * writer yet** — the row producer lands with reconciliation (0400). Surrogate id
- * key (an intent may reconcile many times).
+ * Engine-vs-venue reconciliation diffs (`15` §2, task 0400). One row per dimension
+ * where the engine's persisted record diverged from venue ground truth. Surrogate id
+ * key (an intent/symbol reconciles many times); `engine_value`/`venue_value` are the
+ * compared scalars in each dimension's natural unit (fills → fee/price/qty; funding →
+ * quote amount; position → base-unit qty).
  */
 export const reconciliation = pgTable(
   'reconciliation',
@@ -290,14 +295,19 @@ export const reconciliation = pgTable(
     exchange: text('exchange').notNull(),
     strategy: text('strategy').notNull(),
     subaccount: text('subaccount').notNull(),
+    /** Set for a per-close reconcile; null for a periodic position sweep. */
     intentId: text('intent_id'),
     symbol: text('symbol').notNull(),
-    /** Engine-side position size, base units. */
-    engineQty: doublePrecision('engine_qty').notNull(),
-    /** Venue-side position size, base units. */
-    venueQty: doublePrecision('venue_qty').notNull(),
-    match: boolean('match').notNull(),
-    resolution: text('resolution'),
+    /** Which engine↔venue dimension diverged (`recon_dimension` enum). */
+    dimension: reconDimensionEnum('dimension').notNull(),
+    /** Engine-side compared scalar (dimension's natural unit). */
+    engineValue: doublePrecision('engine_value').notNull(),
+    /** Venue-side compared scalar (dimension's natural unit). */
+    venueValue: doublePrecision('venue_value').notNull(),
+    /** `venue_wins` | `desync` | `in_tolerance` — how the diff was resolved. */
+    resolution: text('resolution').notNull(),
+    /** Whether the diff was inside the configured tolerance. */
+    withinTolerance: boolean('within_tolerance').notNull(),
     /** Reconcile time, epoch ms UTC. */
     ts: bigint('ts', { mode: 'number' }).notNull(),
   },

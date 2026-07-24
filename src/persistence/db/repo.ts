@@ -20,6 +20,7 @@ import type {
   OrderStatusUpdate,
   PnlRecordRow,
   PositionRecord,
+  ReconciliationDiffRecord,
   Repo,
   TrackerSnapshotRecord,
 } from '../../core/ports/index.js'
@@ -33,6 +34,7 @@ import {
   orders,
   pnl,
   positions,
+  reconciliation,
   trackerSnapshots,
 } from './schema.js'
 
@@ -233,6 +235,55 @@ export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly
         .onConflictDoNothing({ target: [pnl.exchange, pnl.strategy, pnl.subaccount, pnl.intentId] })
     },
 
+    async upsertPnlCorrection(record: PnlRecordRow): Promise<void> {
+      // Venue-corrected re-assembly (0400): overwrite the sidecar's baseline row on the `intent_id`
+      // conflict so a money correction wins regardless of write order (`15` §2).
+      const cols = {
+        pEntry: record.pEntry ?? null,
+        pExit: record.pExit ?? null,
+        pAvg: record.pAvg ?? null,
+        deltaPnl: record.deltaPnl,
+        fundingPnl: record.fundingPnl,
+        feeCost: record.feeCost,
+        netPnl: record.netPnl,
+        exitReason: record.exitReason ?? null,
+        errorCode: record.errorCode ?? null,
+        holdDurationS: record.holdDurationS ?? null,
+        fillCount: record.fillCount,
+        fundingReceived: record.fundingReceived,
+        tDropOffsetS: record.tDropOffsetS ?? null,
+      }
+      await db
+        .insert(pnl)
+        .values({ ...triple, intentId: record.intentId, ...cols })
+        .onConflictDoUpdate({ target: [pnl.exchange, pnl.strategy, pnl.subaccount, pnl.intentId], set: cols })
+    },
+
+    async loadPnl(intentId: string): Promise<PnlRecordRow | undefined> {
+      const [r] = await db
+        .select()
+        .from(pnl)
+        .where(and(instanceWhere(pnl, instance), eq(pnl.intentId, intentId)))
+        .limit(1)
+      if (r === undefined) return undefined
+      return {
+        intentId: r.intentId,
+        pEntry: r.pEntry ?? undefined,
+        pExit: r.pExit ?? undefined,
+        pAvg: r.pAvg ?? undefined,
+        deltaPnl: r.deltaPnl ?? 0,
+        fundingPnl: r.fundingPnl ?? 0,
+        feeCost: r.feeCost ?? 0,
+        netPnl: r.netPnl ?? 0,
+        exitReason: r.exitReason ?? undefined,
+        errorCode: r.errorCode ?? undefined,
+        holdDurationS: r.holdDurationS ?? undefined,
+        fillCount: r.fillCount ?? 0,
+        fundingReceived: r.fundingReceived ?? false,
+        tDropOffsetS: r.tDropOffsetS ?? undefined,
+      }
+    },
+
     async loadFundingEventsForSymbol(symbol: string, range: FundingEventRange): Promise<readonly FundingEventRecord[]> {
       const rows = await db
         .select()
@@ -250,6 +301,32 @@ export function createPgRepo({ pool, instance }: { readonly pool: Pool; readonly
         fundingTime: r.fundingTime,
         amount: r.amount,
         rate: r.rate ?? undefined,
+      }))
+    },
+
+    async upsertReconciliation(record: ReconciliationDiffRecord): Promise<void> {
+      // Append-many (surrogate id): an intent/symbol reconciles many times; a no-diff pass writes nothing.
+      await db.insert(reconciliation).values({
+        ...triple,
+        intentId: record.intentId ?? null,
+        symbol: record.symbol,
+        dimension: record.dimension,
+        engineValue: record.engineValue,
+        venueValue: record.venueValue,
+        resolution: record.resolution,
+        withinTolerance: record.withinTolerance,
+        ts: record.ts,
+      })
+    },
+
+    async loadPositions(): Promise<readonly PositionRecord[]> {
+      const rows = await db.select().from(positions).where(instanceWhere(positions, instance))
+      return rows.map((r) => ({
+        symbol: r.symbol,
+        side: r.side,
+        qty: r.qty,
+        entryPrice: r.entryPrice ?? undefined,
+        updatedTs: r.updatedTs,
       }))
     },
   }

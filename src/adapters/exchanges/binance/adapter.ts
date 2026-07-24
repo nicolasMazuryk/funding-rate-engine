@@ -331,11 +331,14 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     average?: number
     filled?: number
     reduceOnly?: boolean
+    fee?: { cost?: number | null } | null
   }): Order {
     const filled = o.filled ?? 0
     // Binance reports `reduceOnly` on the ccxt order (unified flag or raw `info.reduceOnly`).
     const info = typeof o.info === 'object' && o.info !== null ? (o.info as { reduceOnly?: unknown }) : undefined
     const reduceOnly = o.reduceOnly === true || info?.reduceOnly === true || info?.reduceOnly === 'true'
+    // Realized fill fee (quote ccy) for the reconciliation fills-dimension (`15` §2, 0400).
+    const feeCost = o.fee?.cost
     return {
       clientOrderId: o.clientOrderId ?? '',
       ...(o.id ? { venueOrderId: o.id } : {}),
@@ -345,6 +348,7 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
       status: ccxtOrderStatus(o.status, filled),
       ...(o.average !== undefined && o.average !== null ? { fillPx: o.average } : {}),
       ...(filled > 0 ? { qty: filled } : {}),
+      ...(feeCost !== undefined && feeCost !== null ? { fee: feeCost } : {}),
       ...(reduceOnly ? { reduceOnly: true } : {}),
     }
   }

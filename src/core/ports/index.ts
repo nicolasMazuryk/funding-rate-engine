@@ -38,6 +38,7 @@ export type {
   OrderStatusUpdate,
   PnlRecordRow,
   PositionRecord,
+  ReconciliationDiffRecord,
   Repo,
   TrackerSnapshotRecord,
 } from './repo.js'

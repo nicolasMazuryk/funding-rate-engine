@@ -25,7 +25,46 @@ export interface PnlSidecar {
  * `T_drop` is within ±5 s of `T_settle` (`00_globals` §1.1); funding events are ≥1 h
  * apart, so a generous window still resolves to the one drop for this position.
  */
-const FUNDING_MATCH_WINDOW_MS = 30 * 60 * 1000
+export const FUNDING_MATCH_WINDOW_MS = 30 * 60 * 1000
+
+/**
+ * Build the assembler {@link TradeFacts} from a close context + a settled funding amount,
+ * shared by the sidecar and the reconciler (0400) so both derive the same `pnl` shape. An
+ * optional `feeCostOverride` books the venue-corrected fee verbatim (reconciliation, `15` §2).
+ */
+export function tradeFactsFromClose(args: {
+  readonly ctx: TradeCloseContext
+  readonly settledFundingAmount: number
+  readonly fundingReceived: boolean
+  readonly fees: FeeInputs
+  readonly feeCostOverride?: number
+}): TradeFacts {
+  const { ctx, settledFundingAmount, fundingReceived, fees, feeCostOverride } = args
+  return {
+    intentId: ctx.intentId,
+    strategyId: ctx.strategyId,
+    entrySide: ctx.entrySide,
+    exitReason: ctx.exitReason,
+    errorCode: ctx.errorCode,
+    pEntry: ctx.pEntry,
+    pExit: ctx.pExit,
+    pAvg: ctx.pAvg,
+    entryQty: ctx.entryQty,
+    filledQty: ctx.filledQty,
+    fillCount: ctx.fillCount,
+    settledFundingAmount,
+    fundingReceived,
+    enteredAtMs: ctx.enteredAtMs,
+    closedAtMs: ctx.closedAtMs,
+    tSettleMs: ctx.tSettleMs,
+    tDropOffsetS: ctx.tDropOffsetS,
+    fees,
+    // S6 books the MAIN leg from `pEntry` (the MAIN reversal fill); the PRE leg's fill facts
+    // are not threaded from the engine yet, so `PRE_FUNDING_DELTA` books 0 (`07` §2, flagged 0500).
+    mainEntryPx: ctx.pEntry,
+    ...(feeCostOverride !== undefined ? { feeCostOverride } : {}),
+  }
+}
 
 /**
  * Build the sidecar. `fees` is the exchange fee profile (taker/maker percent) the
@@ -40,29 +79,12 @@ export function createPnlSidecar({ repo, fees }: { readonly repo: Repo; readonly
     // received — this is what makes S6 correct: its PRE leg harvests funding across settle, though
     // the MAIN entry lands *after* settle, so the entry-before-settle verdict alone reads false.
     const settled = await loadSettledFunding(ctx)
-    const facts: TradeFacts = {
-      intentId: ctx.intentId,
-      strategyId: ctx.strategyId,
-      entrySide: ctx.entrySide,
-      exitReason: ctx.exitReason,
-      errorCode: ctx.errorCode,
-      pEntry: ctx.pEntry,
-      pExit: ctx.pExit,
-      pAvg: ctx.pAvg,
-      entryQty: ctx.entryQty,
-      filledQty: ctx.filledQty,
-      fillCount: ctx.fillCount,
+    const facts = tradeFactsFromClose({
+      ctx,
       settledFundingAmount: settled?.amount ?? 0,
       fundingReceived: settled !== undefined || ctx.fundingReceived,
-      enteredAtMs: ctx.enteredAtMs,
-      closedAtMs: ctx.closedAtMs,
-      tSettleMs: ctx.tSettleMs,
-      tDropOffsetS: ctx.tDropOffsetS,
       fees,
-      // S6 books the MAIN leg from `pEntry` (the MAIN reversal fill); the PRE leg's fill facts
-      // are not threaded from the engine yet, so `PRE_FUNDING_DELTA` books 0 (`07` §2, flagged 0500).
-      mainEntryPx: ctx.pEntry,
-    }
+    })
     await repo.upsertPnl?.(assembleTradeRecord(facts))
   }
 

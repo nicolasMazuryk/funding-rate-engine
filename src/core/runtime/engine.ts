@@ -112,18 +112,16 @@ export interface EngineDeps {
    * Defaults to `() => true` — existing callers/goldens untouched.
    */
   readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
-  /** Reconciliation sink invoked after `CLOSED` (composition logs the diff; no throw on mismatch). */
-  readonly onReconciliation?: (record: ReconciliationRecord) => void
   /**
-   * Diagnostic ops-event sink (mirrors {@link onReconciliation}) — the ladder's
-   * `ladder.pre_funding_fill` (`05` §2 step 2). Composition logs it + writes a trace record;
-   * absent ⇒ the engine emits nothing.
+   * Diagnostic ops-event sink — the ladder's `ladder.pre_funding_fill` (`05` §2 step 2).
+   * Composition logs it + writes a trace record; absent ⇒ the engine emits nothing. The
+   * reconciler sidecar (0400) reuses this same sink for `reconcile.diff_beyond_tolerance`.
    */
   readonly onOpsEvent?: (event: OpsEvent) => void
   /**
    * Post-trade accounting sink (`15` §1, 0390) — fired at every terminal `commit` that ends a
    * managed lifecycle: `CLOSED` (a position existed) and `NO_POSITION` (none did). Mirrors the
-   * {@link onReconciliation}/{@link onOpsEvent} escape hatches. The sidecar assembles the `pnl`
+   * {@link onOpsEvent} escape hatch. The sidecar assembles the `pnl`
    * row from the in-memory {@link TradeCloseContext} projection + a `funding_events` read. Absent
    * ⇒ the engine emits nothing (existing callers/goldens untouched).
    */
@@ -143,9 +141,15 @@ export interface OpsEvent {
    * The diagnostic events the engine surfaces:
    *  - `ladder.pre_funding_fill` — a ladder rung filled before `T_settle` (S4.1a `05` §2 step 2);
    *  - `strategy6.close_pre_funding_failed` — S6's abort ladder could not flatten PRE (orphan risk, `07` §3);
-   *  - `strategy6.position_fetch_fallback` — S6's REST net-qty confirm failed; tracked fills used (`07` §2 step 4).
+   *  - `strategy6.position_fetch_fallback` — S6's REST net-qty confirm failed; tracked fills used (`07` §2 step 4);
+   *  - `reconcile.diff_beyond_tolerance` — reconciliation found an engine↔venue diff beyond tolerance (`15` §2, 0400).
+   *    Emitted by the reconciler sidecar via this same sink, never by the engine itself.
    */
-  readonly kind: 'ladder.pre_funding_fill' | 'strategy6.close_pre_funding_failed' | 'strategy6.position_fetch_fallback'
+  readonly kind:
+    | 'ladder.pre_funding_fill'
+    | 'strategy6.close_pre_funding_failed'
+    | 'strategy6.position_fetch_fallback'
+    | 'reconcile.diff_beyond_tolerance'
   readonly intentId: string
   readonly symbol: string
 }
@@ -229,15 +233,6 @@ export interface TradeCloseContext {
   readonly tSettleMs?: number
   /** `T_drop − T_settle`, seconds; null when no `T_drop` was observed. */
   readonly tDropOffsetS?: number
-}
-
-/** The reconciliation placeholder's finding: engine fill record vs venue ground truth (`15`, real reconciliation 0400). */
-export interface ReconciliationRecord {
-  readonly intentId: string
-  readonly symbol: string
-  readonly engineQty: number
-  readonly venueQty: number
-  readonly match: boolean
 }
 
 export interface Engine {
@@ -1065,7 +1060,6 @@ export function createEngine(deps: EngineDeps): Engine {
     sweepReduceOnlyOrders(intentId, rec.symbol)
     fireTradeClose(intentId, rec, { pExit: exitFillPxByIntent.get(intentId) })
     exitFillPxByIntent.delete(intentId)
-    void finishReconciliation(intentId)
   }
 
   /**
@@ -1367,21 +1361,6 @@ export function createEngine(deps: EngineDeps): Engine {
     if (pending.leg === 'entry') onEntryOrderUpdate(event, pending.intentId, rec)
     else if (pending.leg === 'exit') onExitOrderUpdate(event, pending.intentId, rec)
     else onExitPolicyOrderUpdate(event, pending.intentId, rec)
-  }
-
-  /** Reconciliation placeholder: compare the engine's recorded entry fill against venue ground truth; log, never throw (0400 replaces). */
-  async function finishReconciliation(intentId: string): Promise<void> {
-    const rec = intents.get(intentId)
-    if (!rec) return
-    const engineQty = rec.entryFillQty ?? rec.entryQty
-    let venueQty = 0
-    try {
-      const order = await exchange.getOrder(makeClientOrderId({ intentId, leg: 'entry', attempt: 1 }))
-      venueQty = order.qty ?? 0
-    } catch {
-      venueQty = 0
-    }
-    deps.onReconciliation?.({ intentId, symbol: rec.symbol, engineQty, venueQty, match: engineQty === venueQty })
   }
 
   function dispatch(event: EngineEvent): void {

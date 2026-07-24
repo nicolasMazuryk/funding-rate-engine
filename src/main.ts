@@ -17,6 +17,7 @@
 import { resolve } from 'node:path'
 import { Pool } from 'pg'
 import { createPnlSidecar } from './accounting/pnl-sidecar.js'
+import { createReconciler } from './accounting/reconcile.js'
 import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
@@ -39,6 +40,7 @@ import { loadEffectiveConfig } from './config/load.js'
 import { createEventBus } from './core/events/bus.js'
 import type { Clock } from './core/ports/clock.js'
 import type { ExchangeAdapter, TimeRange } from './core/ports/exchange-adapter.js'
+import type { OpsEvent } from './core/runtime/engine.js'
 import { createScheduler } from './core/runtime/scheduler.js'
 import type { Instance } from './persistence/db/instance.js'
 import { createPgRepo } from './persistence/db/repo.js'
@@ -143,9 +145,27 @@ async function run(): Promise<void> {
   // so the WS-gated strategies only reach here validly.
   // Post-trade accounting (`15` §1, 0390): the sidecar books one `pnl` row per intent close
   // from the engine's realized-fact hook + the settled `funding_events` amount, off the hot path.
-  const pnlSidecar = createPnlSidecar({
+  const fees = { takerFeePct: cfg.exchangeProfile.takerFeePct, makerFeePct: cfg.exchangeProfile.makerFeePct }
+  const pnlSidecar = createPnlSidecar({ repo, fees })
+  // Reconciliation sidecar (`15` §2, 0400): per-close + periodic engine↔venue drift check; corrects
+  // money (fees/funding) venue-wins, routes position desync to the orphan handler. Reuses the ops
+  // channel for its beyond-tolerance alert. Fires alongside the pnl-sidecar on the same close.
+  const onOpsEvent = (event: OpsEvent): void => logger.warn({ ops: event }, event.kind)
+  const reconciler = createReconciler({
     repo,
-    fees: { takerFeePct: cfg.exchangeProfile.takerFeePct, makerFeePct: cfg.exchangeProfile.makerFeePct },
+    exchange: adapter,
+    bus,
+    clock,
+    tolerances: {
+      fillPricePercent: riskField(cfg.risk, 'reconcile_fill_price_tolerance_percent'),
+      feeUsd: riskField(cfg.risk, 'reconcile_fee_tolerance_usd'),
+      fundingUsd: riskField(cfg.risk, 'reconcile_funding_tolerance_usd'),
+      qty: riskField(cfg.risk, 'reconcile_qty_tolerance'),
+    },
+    sweepSeconds: riskField(cfg.risk, 'reconcile_sweep_seconds'),
+    fees,
+    now: clock.now,
+    onOpsEvent,
   })
   const engineDeps: S1EngineDeps = {
     bus,
@@ -160,8 +180,13 @@ async function run(): Promise<void> {
     breakerOpen: () => ioBreaker.isOpen(), // sole preflight consultation for the venue-io breaker
     initialBalance,
     configHash: cfg.revisionHash,
-    onReconciliation: (record) => logger.info({ reconciliation: record }, 'reconciliation'),
-    onTradeClose: pnlSidecar.onTradeClose,
+    onOpsEvent,
+    // Both accounting sidecars fire on the same terminal close: the pnl-sidecar books the baseline row,
+    // the reconciler corrects it venue-wins (`15` §1/§2). Order-independent (0400 doc).
+    onTradeClose: (ctx) => {
+      pnlSidecar.onTradeClose(ctx)
+      reconciler.onTradeClose(ctx)
+    },
   }
   const gateDeps = { clock, fundingIncome: (symbol: string, range: TimeRange) => adapter.fundingIncome(symbol, range) }
   const engine =
@@ -232,6 +257,7 @@ async function run(): Promise<void> {
   await recoverOnBoot({ repo, wal, engine, killSwitch, configHash: cfg.revisionHash, instance, pool })
 
   scheduler.start()
+  reconciler.start() // arm the periodic engine↔venue position sweep (`15` §2, 0400)
   logger.info('instance running')
 
   // Clean SIGTERM: stop scheduling, dispose the engine, close the venue + WAL, end the pool.
@@ -241,6 +267,7 @@ async function run(): Promise<void> {
     shuttingDown = true
     logger.info({ signal }, 'shutting down')
     scheduler.stop()
+    reconciler.stop()
     forwarder.stop()
     unsubKillSwitch()
     // Risk-layer teardown (0380): drop bus subscriptions + cancel breaker/escalation timers.

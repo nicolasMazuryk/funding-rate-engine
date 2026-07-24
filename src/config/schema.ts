@@ -155,6 +155,15 @@ export const StrategyYamlSchema = z
         breaker_cooldown_seconds: z.int().gt(0).default(30),
         breaker_escalation_seconds: z.int().gt(0).default(300),
         breaker_order_reject_threshold: z.int().gt(0).default(3),
+        // Reconciliation knobs (`15` §2, 0400). All `.default()` so existing YAMLs parse under
+        // `.strict()`; conservative defaults. `reconcile_sweep_seconds` — periodic position-reconcile
+        // cadence; the `*_tolerance*` keys bound each dimension's engine↔venue diff before it alerts:
+        // fill price in percent, fee/funding in quote USD, qty in base units.
+        reconcile_sweep_seconds: z.int().gt(0).default(300),
+        reconcile_fill_price_tolerance_percent: z.number().gte(0).default(0.05),
+        reconcile_fee_tolerance_usd: z.number().gte(0).default(0.01),
+        reconcile_funding_tolerance_usd: z.number().gte(0).default(0.01),
+        reconcile_qty_tolerance: z.number().gte(0).default(1e-8),
       })
       .strict(),
     symbols: z

@@ -100,7 +100,7 @@ export async function createE2eContext(): Promise<E2eContext> {
       await disposeInstances()
       tmp?.dispose()
       await adminPool.query(
-        'TRUNCATE intents, intent_wal, orders, fills, positions, funding_events, kill_switch, tracker_snapshots, pnl',
+        'TRUNCATE intents, intent_wal, orders, fills, positions, funding_events, kill_switch, tracker_snapshots, pnl, reconciliation',
       )
       tmp = tempDir('skeleton-e2e-')
       return tmp.walPath

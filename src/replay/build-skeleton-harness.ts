@@ -36,13 +36,7 @@ import type { Balance, ExchangeAdapter, TimeRange } from '../core/ports/exchange
 import type { Repo } from '../core/ports/repo.js'
 import type { RiskGate } from '../core/ports/risk-gate.js'
 import type { TransitionLog, TransitionLogEntry } from '../core/ports/transition-log.js'
-import {
-  createEngine,
-  type Engine,
-  type OpsEvent,
-  type ReconciliationRecord,
-  type TradeCloseContext,
-} from '../core/runtime/engine.js'
+import { createEngine, type Engine, type OpsEvent, type TradeCloseContext } from '../core/runtime/engine.js'
 import { createScheduler, type Scheduler } from '../core/runtime/scheduler.js'
 import {
   createStrategyRegistry,
@@ -107,7 +101,6 @@ export interface BuildOpts {
   readonly breakerOpen?: () => boolean
   readonly initialBalance?: Balance
   readonly accountSetupComplete?: boolean | ((symbol: string) => boolean)
-  readonly onReconciliation?: (record: ReconciliationRecord) => void
   /** Diagnostic ops-event sink (S4.1a `ladder.pre_funding_fill`); defaults to writing an `ops` trace record. */
   readonly onOpsEvent?: (event: OpsEvent) => void
   /** Post-trade accounting hook (`15` §1, 0390); absent ⇒ no `pnl` rows. The e2e harness wires the sidecar. */
@@ -246,10 +239,6 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
       }
     : rawWal
 
-  const onReconciliation =
-    opts.onReconciliation ??
-    ((record: ReconciliationRecord) => logger.info({ reconciliation: record }, 'reconciliation'))
-
   // Default ops-event sink: write an `ops` trace record (diagnostic, never diffed) so a golden run
   // that hits `ladder.pre_funding_fill` carries it; absent a trace, drop it. Explicit opt wins.
   const onOpsEvent =
@@ -274,7 +263,6 @@ export function buildSkeletonEngine(opts: BuildOpts): SkeletonHarness {
     breakerOpen: opts.breakerOpen,
     initialBalance,
     accountSetupComplete: opts.accountSetupComplete,
-    onReconciliation,
     onOpsEvent,
     onTradeClose: opts.onTradeClose,
   })

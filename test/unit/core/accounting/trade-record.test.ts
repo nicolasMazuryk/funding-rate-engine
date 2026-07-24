@@ -58,6 +58,13 @@ describe('assembleTradeRecord — Group L (s1/s1-ws/s2)', () => {
     expect(r.fundingPnl).toBe(0)
   })
 
+  it('books a feeCostOverride verbatim (reconciliation venue-corrected fee, 0400)', () => {
+    // Baseline config fee is 0.2; the venue-corrected override replaces it and re-derives netPnl.
+    const r = assembleTradeRecord(longClose({ feeCostOverride: 0.35 }))
+    expect(r.feeCost).toBeCloseTo(0.35, 10)
+    expect(r.netPnl).toBeCloseTo(2 - 0.35, 10)
+  })
+
   it('flips the delta sign for a short entry', () => {
     // short: profit when price falls. exit 101 > entry 100 ⇒ loss of 2.
     const r = assembleTradeRecord(longClose({ entrySide: 'short' }))

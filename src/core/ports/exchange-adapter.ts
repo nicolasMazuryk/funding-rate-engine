@@ -129,6 +129,11 @@ export interface Order {
   readonly fillPx?: number
   /** Filled quantity, base units. */
   readonly qty?: number
+  /**
+   * Realized fill fee, quote currency (positive cost), when the venue reports it — the
+   * reconciliation fills-dimension money truth (`15` §2, 0400). Absent when unknown.
+   */
+  readonly fee?: number
   /** Reduce-only flag, when the venue reports it — the pre-entry stale-sweep (`13`, 0380) filters on it. */
   readonly reduceOnly?: boolean
 }

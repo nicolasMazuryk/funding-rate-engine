@@ -48,6 +48,22 @@ describe('createSimExchange', () => {
     expect(() => sim.placeOrder(buy())).toThrow(/no price scripted/)
   })
 
+  it('books the taker fee on a fill and reports it via getOrder (reconciliation fills dimension, 0400)', async () => {
+    const { sim } = harness()
+    sim.setPrice('BTC', 30_000)
+    await sim.placeOrder(buy({ qty: 2 }))
+    // Default taker fee 0.04% × notional (30 000 × 2) = 24.
+    expect((await sim.getOrder('o1')).fee).toBeCloseTo(24, 6)
+  })
+
+  it('scriptOrderFee reports a divergent fee for the fee-divergence scenario', async () => {
+    const { sim } = harness()
+    sim.setPrice('BTC', 30_000)
+    await sim.placeOrder(buy({ qty: 2 }))
+    sim.scriptOrderFee('o1', 99.5)
+    expect((await sim.getOrder('o1')).fee).toBe(99.5)
+  })
+
   it('reduce-only SELL flattens the position, capping qty at the open size', async () => {
     const { sim, events } = harness()
     sim.setPrice('BTC', 30_000)

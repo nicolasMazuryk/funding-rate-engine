@@ -15,6 +15,13 @@
       "when": 1784800401106,
       "tag": "0001_wakeful_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1784800401107,
+      "tag": "0002_regular_reconciliation",
+      "breakpoints": true
     }
   ]
 }

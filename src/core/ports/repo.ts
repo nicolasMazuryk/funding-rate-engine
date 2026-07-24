@@ -133,6 +133,30 @@ export interface PnlRecordRow {
   readonly tDropOffsetS?: number
 }
 
+/**
+ * One reconciliation diff row (`15` §2, task 0400). The reconciler writes one per
+ * dimension where the engine's persisted record diverged from venue ground truth.
+ * Surrogate-id keyed (an intent/symbol reconciles many times); the instance triple
+ * is added by the repo. `engineValue`/`venueValue` are the compared scalars in each
+ * dimension's natural unit (fills → fee/price/qty; funding → quote amount; position →
+ * base-unit qty).
+ */
+export interface ReconciliationDiffRecord {
+  /** Set for a per-close reconcile; absent for a periodic position sweep. */
+  readonly intentId?: string
+  readonly symbol: string
+  /** Which engine↔venue dimension diverged. */
+  readonly dimension: 'fills' | 'position' | 'funding'
+  readonly engineValue: number
+  readonly venueValue: number
+  /** How the diff was resolved: `venue_wins` (money corrected), `desync` (routed to orphan/flatten), `in_tolerance`. */
+  readonly resolution: string
+  /** Whether the diff was inside the configured tolerance (a beyond-tolerance diff also alerts). */
+  readonly withinTolerance: boolean
+  /** Reconcile time, epoch ms UTC. */
+  readonly ts: number
+}
+
 /** S2 tracker snapshot (storage only; write wiring is 0370). Natural key `intentId`. */
 export interface TrackerSnapshotRecord {
   readonly intentId: string
@@ -170,8 +194,20 @@ export interface Repo {
   upsertTrackerSnapshot?(snapshot: TrackerSnapshotRecord): Promise<void>
   /** Load all tracker snapshots for the instance (consumed by 0370 respawn). */
   loadTrackerSnapshots?(): Promise<readonly TrackerSnapshotRecord[]>
-  /** Write one post-trade `pnl` row (idempotent, natural key `intentId`; `15` §1, 0390). */
+  /** Write one post-trade `pnl` row (insert-once, natural key `intentId`; `15` §1, 0390). A re-delivery is a no-op. */
   upsertPnl?(record: PnlRecordRow): Promise<void>
+  /**
+   * Overwrite an existing `pnl` row with a venue-corrected one (reconciliation, 0400). Unlike
+   * {@link upsertPnl} (insert-once), this wins on the `intentId` conflict, so a money correction lands
+   * regardless of whether the sidecar's baseline row was written first (order-independent — `15` §2).
+   */
+  upsertPnlCorrection?(record: PnlRecordRow): Promise<void>
+  /** Load one intent's current `pnl` row, or `undefined` if none — the reconciler's engine-side money truth (0400). */
+  loadPnl?(intentId: string): Promise<PnlRecordRow | undefined>
   /** Load the instance's settled funding events for a symbol within a time range (accounting sidecar; 0390). */
   loadFundingEventsForSymbol?(symbol: string, range: FundingEventRange): Promise<readonly FundingEventRecord[]>
+  /** Append one reconciliation diff row (surrogate-id, append-many; `15` §2, 0400). */
+  upsertReconciliation?(record: ReconciliationDiffRecord): Promise<void>
+  /** Load the instance's current persisted positions — the periodic reconcile sweep's engine-side view (0400). */
+  loadPositions?(): Promise<readonly PositionRecord[]>
 }
