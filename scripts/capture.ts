@@ -1,24 +1,40 @@
 /**
  * `npm run capture` — records real venue responses into committed fixtures (task
- * 0250; spec `0000` §5). Thin CLI over `src/capture/capture-binance.ts`; no test
- * code imported (CLI must not depend on `test/`).
+ * 0250; spec `0000` §5). Thin CLI over the per-venue capture drivers
+ * (`src/capture/capture-{binance,bybit}.ts`); no test code imported (CLI must not
+ * depend on `test/`).
  *
- *   npm run capture -- --venue binance --set markets|public-ws|private-ws|orders \
+ *   npm run capture -- --venue binance|bybit --set markets|public-ws|private-ws|orders \
  *     [--count N] [--window-ms N] [--out DIR]
  *
- * `private-ws`/`orders` read testnet keys from env (`BINANCE_TESTNET_API_KEY` /
+ * `private-ws`/`orders` read testnet keys from env (`<VENUE>_TESTNET_API_KEY` /
  * `_SECRET`) and fail loud, non-zero, when absent — mirrors the integration-gate
  * convention (skip loudly, never silently no-op).
+ *
+ * A new venue is one entry in {@link DRIVERS} (data, not a branch): its driver module
+ * exports the same four set functions with the same signatures.
  */
 
-import { captureMarkets, captureOrders, capturePrivateWs, capturePublicWs } from '../src/capture/capture-binance.js'
+import * as binance from '../src/capture/capture-binance.js'
+import * as bybit from '../src/capture/capture-bybit.js'
 
 const SETS = ['markets', 'public-ws', 'private-ws', 'orders'] as const
 type Set_ = (typeof SETS)[number]
 
+/** One venue's capture driver — the four set functions, identical shape per venue. */
+interface Driver {
+  captureMarkets(outDir?: string): Promise<void>
+  capturePublicWs(opts: { count?: number; windowMs?: number; outDir?: string }): Promise<void>
+  capturePrivateWs(opts: { windowMs?: number; outDir?: string }): Promise<void>
+  captureOrders(outDir?: string): Promise<void>
+}
+
+const DRIVERS: Record<string, Driver> = { binance, bybit }
+const VENUES = Object.keys(DRIVERS)
+
 const USAGE = [
   'Usage:',
-  '  npm run capture -- --venue binance --set markets|public-ws|private-ws|orders',
+  `  npm run capture -- --venue ${VENUES.join('|')} --set markets|public-ws|private-ws|orders`,
   '    [--count N] [--window-ms N] [--out DIR]',
 ].join('\n')
 
@@ -80,21 +96,22 @@ function parseArgs(argv: readonly string[]): Args {
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
   if (args.venue === undefined) fail('--venue is required')
-  if (args.venue !== 'binance') fail(`unsupported venue '${args.venue}' (only 'binance' today)`)
+  const driver = DRIVERS[args.venue]
+  if (driver === undefined) fail(`unsupported venue '${args.venue}' (one of: ${VENUES.join(', ')})`)
   if (args.set === undefined) fail('--set is required')
 
   switch (args.set) {
     case 'markets':
-      await captureMarkets(args.out)
+      await driver.captureMarkets(args.out)
       break
     case 'public-ws':
-      await capturePublicWs({ count: args.count, windowMs: args.windowMs, outDir: args.out })
+      await driver.capturePublicWs({ count: args.count, windowMs: args.windowMs, outDir: args.out })
       break
     case 'private-ws':
-      await capturePrivateWs({ windowMs: args.windowMs, outDir: args.out })
+      await driver.capturePrivateWs({ windowMs: args.windowMs, outDir: args.out })
       break
     case 'orders':
-      await captureOrders(args.out)
+      await driver.captureOrders(args.out)
       break
   }
   process.stdout.write(`capture: wrote ${args.set} fixtures\n`)

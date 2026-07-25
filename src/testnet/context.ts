@@ -4,12 +4,21 @@
  * DRYing the url-merge previously duplicated inline in `capture-binance.ts` and the
  * integration smokes) and exposes the narrow surface checks need. `onCleanup` here is
  * a no-op placeholder — `runner.ts` overrides it per-check.
+ *
+ * One builder per venue (Binance task 0260, Bybit task 0420). They share the
+ * {@link CheckContext} shape and nothing else — the clients they expose are the venue's
+ * own concrete types, since the checks that need raw client access (`assert-flat`,
+ * `error-taxonomy`) are venue-specific by construction. No premature abstraction: a
+ * common "venue context" interface would only be the union of two client sets.
  */
 
+import { readFileSync } from 'node:fs'
 import { createRealClock } from '../adapters/clock/real-clock.js'
 import { createBinanceAdapter } from '../adapters/exchanges/binance/adapter.js'
 import { type BinanceClients, createBinanceClients } from '../adapters/exchanges/binance/factory.js'
-import type { ExchangeProfile } from '../config/exchange-schema.js'
+import { createBybitAdapter } from '../adapters/exchanges/bybit/adapter.js'
+import { type BybitClients, createBybitClients, createBybitRateLimiter } from '../adapters/exchanges/bybit/factory.js'
+import { type ExchangeProfile, parseExchangeProfiles } from '../config/exchange-schema.js'
 import { createEventBus } from '../core/events/bus.js'
 import type { EngineEvent } from '../core/events/types.js'
 import type { EventBus } from '../core/ports/bus.js'
@@ -85,6 +94,78 @@ export async function createBinanceTestnetContext(): Promise<BinanceTestnetConte
     clock,
     bus,
     events,
+    onCleanup: () => {},
+    async getBalanceFree(): Promise<number> {
+      const balance = await adapter.getBalance()
+      return balance.free
+    },
+  }
+}
+
+// ── Bybit (task 0420) ────────────────────────────────────────────────────────
+
+/** Committed venue profile path — the checks assert against the real config, not a copy. */
+const EXCHANGES_YAML = 'config/exchanges.yaml'
+
+export function hasBybitTestnetCredentials(): boolean {
+  return !!process.env.BYBIT_TESTNET_API_KEY && !!process.env.BYBIT_TESTNET_API_SECRET
+}
+
+export interface BybitTestnetContext extends CheckContext {
+  readonly adapter: ExchangeAdapter
+  /** Raw ccxt/native clients — `assert-flat` needs `fetchOpenOrders`/`cancelOrder` and
+   * `error-taxonomy`/`account-setup` the native `RestClientV5`, surfaces the
+   * `ExchangeAdapter` port deliberately doesn't expose generically. */
+  readonly clients: BybitClients
+  readonly clock: Clock
+  readonly bus: EventBus
+  readonly events: readonly EngineEvent[]
+  /**
+   * The **committed** `config/exchanges.yaml` Bybit profile (not a placeholder): the
+   * adapter under test is built from it, so `deltas`/`rate-limiter` assert the shipped
+   * numbers rather than a copy that could drift.
+   */
+  readonly profile: ExchangeProfile
+  /** Free quote-asset balance — the fund-dependent checks' self-gate. */
+  getBalanceFree(): Promise<number>
+}
+
+/** Build the shared adapter/clients once; every check in the registry reuses this one context. */
+export async function createBybitTestnetContext(): Promise<BybitTestnetContext> {
+  const hasCredentials = hasBybitTestnetCredentials()
+  const apiKey = process.env.BYBIT_TESTNET_API_KEY ?? 'public'
+  const apiSecret = process.env.BYBIT_TESTNET_API_SECRET ?? 'public'
+
+  const clock = createRealClock()
+  const bus = createEventBus()
+  const events: EngineEvent[] = []
+  bus.subscribe((e) => events.push(e))
+
+  const profile = parseExchangeProfiles(readFileSync(EXCHANGES_YAML, 'utf8')).bybit
+  const clients = createBybitClients(profile, { apiKey, apiSecret }, { network: 'testnet' })
+  const adapter = createBybitAdapter({
+    client: clients.ccxt,
+    clock,
+    limiter: createBybitRateLimiter(profile, clock),
+    accountSetup: clients.native,
+    ws: clients.wsPublic,
+    wsPrivate: clients.wsPrivate,
+    wsApiPrivate: clients.wsApiPrivate,
+    restOrders: clients.native,
+    bus,
+    submissionStaggerMs: profile.submissionStaggerMs,
+    wsOrderRestFallback: profile.deltas.wsOrderRestFallback ?? false,
+  })
+  await adapter.init()
+
+  return {
+    hasCredentials,
+    adapter,
+    clients,
+    clock,
+    bus,
+    events,
+    profile,
     onCleanup: () => {},
     async getBalanceFree(): Promise<number> {
       const balance = await adapter.getBalance()

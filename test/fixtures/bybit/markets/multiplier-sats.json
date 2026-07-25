@@ -1,0 +1,20 @@
+{
+  "id": "10000SATSUSDT",
+  "symbol": "10000SATS/USDT:USDT",
+  "base": "10000SATS",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "precision": { "amount": 1, "price": 0.000001 },
+  "limits": { "amount": { "min": 1 }, "cost": {} },
+  "info": { "contractType": "LinearPerpetual", "fundingInterval": 240 }
+}

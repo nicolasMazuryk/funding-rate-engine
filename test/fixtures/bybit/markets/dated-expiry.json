@@ -1,0 +1,21 @@
+{
+  "id": "BTC-26DEC25",
+  "symbol": "BTC/USDT:USDT-251226",
+  "base": "BTC",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "future",
+  "spot": false,
+  "swap": false,
+  "future": true,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 1,
+  "expiry": 1766736000000,
+  "precision": { "amount": 0.001, "price": 0.5 },
+  "limits": { "amount": { "min": 0.001 }, "cost": {} },
+  "info": { "contractType": "LinearFutures", "fundingInterval": 0 }
+}

@@ -4,27 +4,79 @@
  * machine-readable pass/fail/skip output. Thin CLI over `src/testnet/`, mirroring
  * `scripts/capture.ts`'s idiom; no test code imported (CLI must not depend on `test/`).
  *
- *   npm run test:testnet -- --venue binance [--out PATH] [--json]
+ *   npm run test:testnet -- --venue <binance|bybit> [--out PATH] [--json]
  *
  * Without testnet credentials, every check reports `skip: no credentials` and the
  * command exits 0 — a missing key is never a red build. With credentials, the exit
  * code is `exitCodeFor(summary)`: 1 iff any check failed (skips never fail the run).
+ *
+ * Adding a venue (0420 Bybit; 0430–0460 next) is one {@link VENUE_REGISTRY} entry — its
+ * `17` §3 check registry, its context builder and its credential probe. The CLI stays
+ * venue-agnostic.
  */
 
+import type { ExchangeAdapter } from '../src/core/ports/exchange-adapter.js'
 import { binanceTestnetChecks } from '../src/testnet/binance/registry.js'
+import { bybitTestnetChecks } from '../src/testnet/bybit/registry.js'
 import {
   createBinanceTestnetContext,
+  createBybitTestnetContext,
   hasBinanceTestnetCredentials,
+  hasBybitTestnetCredentials,
   TESTNET_TOOL_VERSION,
 } from '../src/testnet/context.js'
 import { runChecks } from '../src/testnet/runner.js'
 import { exitCodeFor, formatSummaryTable, writeSummary } from '../src/testnet/summary.js'
-import type { TestnetSummary } from '../src/testnet/types.js'
+import type { Check, CheckContext, TestnetSummary } from '../src/testnet/types.js'
 
-const VENUES = ['binance'] as const
+const VENUES = ['binance', 'bybit'] as const
 type Venue = (typeof VENUES)[number]
 
-const USAGE = ['Usage:', '  npm run test:testnet -- --venue binance [--out PATH] [--json]'].join('\n')
+const USAGE = ['Usage:', `  npm run test:testnet -- --venue <${VENUES.join('|')}> [--out PATH] [--json]`].join('\n')
+
+/**
+ * One venue's testnet tier, with its context type already bound: the CLI only needs the
+ * check names (for the all-skip summary) and a way to run the credentialed suite. A venue's
+ * checks and its context are matched by construction — {@link venueEntry} is where the two
+ * meet, so nothing downstream has to be generic over the venue.
+ */
+interface VenueEntry {
+  readonly checks: readonly { readonly name: string; readonly specRef: string }[]
+  hasCredentials(): boolean
+  run(venue: Venue): Promise<TestnetSummary>
+}
+
+function venueEntry<Ctx extends CheckContext & { readonly adapter: ExchangeAdapter }>(entry: {
+  readonly checks: readonly Check<Ctx>[]
+  readonly createContext: () => Promise<Ctx>
+  readonly hasCredentials: () => boolean
+}): VenueEntry {
+  return {
+    checks: entry.checks,
+    hasCredentials: entry.hasCredentials,
+    async run(venue: Venue): Promise<TestnetSummary> {
+      const ctx = await entry.createContext()
+      try {
+        return await runChecks(venue, TESTNET_TOOL_VERSION, entry.checks, ctx, { now: () => Date.now() })
+      } finally {
+        await ctx.adapter.close() // sockets/timers down even if the runner itself blew up
+      }
+    },
+  }
+}
+
+const VENUE_REGISTRY: Record<Venue, VenueEntry> = {
+  binance: venueEntry({
+    checks: binanceTestnetChecks,
+    createContext: createBinanceTestnetContext,
+    hasCredentials: hasBinanceTestnetCredentials,
+  }),
+  bybit: venueEntry({
+    checks: bybitTestnetChecks,
+    createContext: createBybitTestnetContext,
+    hasCredentials: hasBybitTestnetCredentials,
+  }),
+}
 
 function fail(reason?: string): never {
   if (reason !== undefined) process.stderr.write(`testnet: ${reason}\n`)
@@ -100,14 +152,8 @@ async function main(): Promise<void> {
 
   const outPath = args.out ?? defaultSummaryPath(venue)
 
-  let summary: TestnetSummary
-  if (!hasBinanceTestnetCredentials()) {
-    summary = skippedSummary(venue, binanceTestnetChecks)
-  } else {
-    const ctx = await createBinanceTestnetContext()
-    summary = await runChecks(venue, TESTNET_TOOL_VERSION, binanceTestnetChecks, ctx, { now: () => Date.now() })
-    await ctx.adapter.close()
-  }
+  const entry = VENUE_REGISTRY[venue]
+  const summary: TestnetSummary = entry.hasCredentials() ? await entry.run(venue) : skippedSummary(venue, entry.checks)
 
   writeSummary(outPath, summary)
 

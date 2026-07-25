@@ -1,0 +1,20 @@
+{
+  "id": "ZEROUSDT",
+  "symbol": "ZERO/USDT:USDT",
+  "base": "ZERO",
+  "quote": "USDT",
+  "settle": "USDT",
+  "type": "swap",
+  "spot": false,
+  "swap": true,
+  "future": false,
+  "option": false,
+  "contract": true,
+  "linear": true,
+  "inverse": false,
+  "active": true,
+  "contractSize": 0,
+  "precision": { "amount": 1, "price": 0.001 },
+  "limits": { "amount": { "min": 1 }, "cost": {} },
+  "info": { "contractType": "LinearPerpetual", "fundingInterval": 480 }
+}

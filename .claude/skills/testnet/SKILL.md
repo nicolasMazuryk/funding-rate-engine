@@ -18,7 +18,12 @@ other venue's testnet tier (0420–0460) copies.
 npm run test:testnet -- --venue binance [--out PATH] [--json]
 ```
 
-- No `BINANCE_TESTNET_API_KEY`/`_SECRET` in env → every check reports `skip: no
+Since task 0420 `--venue` also accepts **`bybit`** (registry `src/testnet/bybit/registry.ts`,
+keys `BYBIT_TESTNET_API_KEY`/`_SECRET`, summary under `test/testnet/bybit/`); a venue is one
+entry in `scripts/testnet.ts`'s `VENUE_REGISTRY`. Substitute the venue below as needed;
+Bybit's venue-specific skips are documented in `docs/testnet-notes.md`.
+
+- No `<VENUE>_TESTNET_API_KEY`/`_SECRET` in env → every check reports `skip: no
   credentials`, summary still written, **exit 0**. Never a red build on a missing key.
 - With credentials → checks run serially (they share account state), writing
   `test/testnet/binance/summary.json` by default; `--out` overrides the path; `--json`

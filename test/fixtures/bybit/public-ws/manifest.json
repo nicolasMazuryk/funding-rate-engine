@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1784989321532,
+  "count": 21,
+  "network": "prod",
+  "set": "public-ws",
+  "source": "bybit WebsocketClient 'update' — tickers.BTCUSDT (linear)",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "bybit"
+}

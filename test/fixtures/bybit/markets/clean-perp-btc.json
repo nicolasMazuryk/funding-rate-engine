@@ -1,0 +1,92 @@
+{
+  "active": true,
+  "base": "BTC",
+  "baseId": "BTC",
+  "contract": true,
+  "contractSize": 1,
+  "created": 1584230400000,
+  "feeSide": "get",
+  "future": false,
+  "id": "BTCUSDT",
+  "info": {
+    "baseCoin": "BTC",
+    "contractType": "LinearPerpetual",
+    "copyTrading": "both",
+    "deliveryFeeRate": "",
+    "deliveryTime": "0",
+    "displayName": "",
+    "forbidUplWithdrawal": false,
+    "fundingInterval": 480,
+    "isPreListing": false,
+    "launchTime": "1584230400000",
+    "leverageFilter": {
+      "leverageStep": "0.01",
+      "maxLeverage": "100.00",
+      "minLeverage": "1"
+    },
+    "lotSizeFilter": {
+      "maxMktOrderQty": "150.000",
+      "maxOrderQty": "1500.000",
+      "minNotionalValue": "5",
+      "minOrderQty": "0.001",
+      "postOnlyMaxOrderQty": "1500.000",
+      "qtyStep": "0.001"
+    },
+    "lowerFundingRate": "-0.005",
+    "preListingInfo": null,
+    "priceFilter": {
+      "maxPrice": "1999999.80",
+      "minPrice": "0.10",
+      "tickSize": "0.10"
+    },
+    "priceScale": "2",
+    "quoteCoin": "USDT",
+    "riskParameters": {
+      "priceLimitRatioX": "0.01",
+      "priceLimitRatioY": "0.02"
+    },
+    "settleCoin": "USDT",
+    "status": "Trading",
+    "symbol": "BTCUSDT",
+    "symbolId": 5,
+    "symbolType": "",
+    "unifiedMarginTrade": true,
+    "upperFundingRate": "0.005"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 1500,
+      "min": 0.001
+    },
+    "cost": {},
+    "leverage": {
+      "max": 100,
+      "min": 1
+    },
+    "price": {
+      "max": 1999999.8,
+      "min": 0.1
+    }
+  },
+  "linear": true,
+  "maker": 0.0001,
+  "marginModes": {},
+  "option": false,
+  "percentage": true,
+  "precision": {
+    "amount": 0.001,
+    "price": 0.1
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "BTC/USDT:USDT",
+  "taker": 0.0006,
+  "tierBased": true,
+  "type": "swap"
+}

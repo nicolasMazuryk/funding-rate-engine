@@ -21,6 +21,8 @@ import { createReconciler } from './accounting/reconcile.js'
 import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
+import { createBybitAdapter } from './adapters/exchanges/bybit/adapter.js'
+import { createBybitClients, createBybitRateLimiter } from './adapters/exchanges/bybit/factory.js'
 import type { ConsecutiveFailureCounter } from './adapters/shared/errors.js'
 import { createSimExchange } from './adapters/sim/sim-exchange.js'
 import {
@@ -61,8 +63,9 @@ import { createOrphanHandler } from './risk/orphan-handler.js'
 const CLOSE_BACKOFFS_MS: readonly number[] = [250, 1000, 3000]
 
 /**
- * Build the venue adapter for `cfg` — the sim venue when `ADAPTER=sim`, else the Binance adapter.
- * The venue-io breaker is threaded in as the adapter's `failures` observer so every general-lane
+ * Build the venue adapter for `cfg` — the sim venue when `ADAPTER=sim`, else the adapter for
+ * `cfg.exchange` (one `case` per in-repo venue; the enum is closed by `config/env.ts`). The
+ * venue-io breaker is threaded in as the adapter's `failures` observer so every general-lane
  * REST call feeds it (`callGeneral` records success/failure).
  */
 function buildAdapter(
@@ -73,16 +76,33 @@ function buildAdapter(
   logger: ReturnType<typeof createLogger>,
 ): ExchangeAdapter {
   if (process.env.ADAPTER === 'sim') return createSimExchange(clock, bus)
-  const clients = createBinanceClients(cfg.exchangeProfile, cfg.secrets)
-  const limiter = createBinanceRateLimiter(cfg.exchangeProfile, clock)
-  return createBinanceAdapter({
-    client: clients.ccxt,
-    clock,
-    limiter,
-    deny: cfg.symbols.deny,
-    failures,
-    log: (m, meta) => logger.warn(meta ?? {}, m),
-  })
+  const log = (m: string, meta?: Record<string, unknown>): void => logger.warn(meta ?? {}, m)
+  switch (cfg.exchange) {
+    case 'bybit': {
+      const clients = createBybitClients(cfg.exchangeProfile, cfg.secrets)
+      return createBybitAdapter({
+        client: clients.ccxt,
+        clock,
+        limiter: createBybitRateLimiter(cfg.exchangeProfile, clock),
+        accountSetup: clients.native,
+        deny: cfg.symbols.deny,
+        submissionStaggerMs: cfg.exchangeProfile.submissionStaggerMs,
+        failures,
+        log,
+      })
+    }
+    default: {
+      const clients = createBinanceClients(cfg.exchangeProfile, cfg.secrets)
+      return createBinanceAdapter({
+        client: clients.ccxt,
+        clock,
+        limiter: createBinanceRateLimiter(cfg.exchangeProfile, clock),
+        deny: cfg.symbols.deny,
+        failures,
+        log,
+      })
+    }
+  }
 }
 
 /** The two circuit breakers + their timing bounds, read from the validated `config.risk` (`13` §3, 0380). */

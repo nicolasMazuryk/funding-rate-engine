@@ -6,12 +6,13 @@
 # WS-capable), not "adapter implemented in this repo".
 #
 # WS URLs are best-effort real per-venue endpoints, inert until an adapter reads
-# them (0190 for Binance; 0420–0460 for the rest). Correctable when each adapter
-# is built and its venue team reviews.
+# them (0190 for Binance, 0420 for Bybit; 0430–0460 for the rest). Correctable when
+# each adapter is built and its venue team reviews.
 #
 # rate_limit_weight_per_minute sizes the token bucket (task 0200). Binance 2400 is
-# the published fapi request-weight/min; the other five are 2400 placeholders,
-# correctable per-venue at 0420–0460.
+# the published fapi request-weight/min, Bybit 6000 is derived from its request-count
+# caps (see its block); the other four are 2400 placeholders, correctable per-venue at
+# 0430–0460.
 
 binance:
   taker_fee_pct: 0.05
@@ -39,11 +40,25 @@ bybit:
   maker_fee_pct: 0.02
   submission_stagger_ms: 150 # 00_globals §6 — Bybit serializes at 150 ms
   rate_limit_reserve_pct: 10
-  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
+  # Bybit publishes NO weight model (task 0420 decision D2): its caps are request counts —
+  # 600 req/5 s per IP (= 7200/min) and 10 order create/amend/cancel per second per UID.
+  # The limiter is one bucket/min with a `rate_limit_reserve_pct` order reserve, so 6000/min
+  # makes the reserve exactly 600/min = 10/s = the venue's real order cap, leaving the general
+  # lane 5400/min (90/s), safely under the 7200/min IP cap. One number, both lanes true, no
+  # schema change; every Bybit call costs weight 1 (`adapter.ts` WEIGHT_REQUEST).
+  rate_limit_weight_per_minute: 6000
   ws_order_adapter: true
   ws:
     public_url: wss://stream.bybit.com/v5/public/linear
     private_url: wss://stream.bybit.com/v5/private
+  # Bybit testnet (task 0420) — the testnet verification tier swaps to these base URLs; the
+  # native `bybit-api` SDK's own `testnet: true` flag (factory.ts) covers the WS trade API,
+  # and ccxt's `setSandboxMode(true)` the REST host.
+  testnet:
+    ws:
+      public_url: wss://stream-testnet.bybit.com/v5/public/linear
+      private_url: wss://stream-testnet.bybit.com/v5/private
+    rest_url: https://api-testnet.bybit.com
   deltas: {}
 
 okx:

@@ -13,8 +13,8 @@ import { STRATEGY_IDS, type StrategyId } from './canonical.js'
 import { ConfigParseError } from './errors.js'
 import { zodErrorToConfigError } from './schema.js'
 
-/** The sole in-repo adapter today; extend per-venue as 0420+ land (do not pre-populate). */
-export const EXCHANGES = ['binance'] as const
+/** The in-repo adapters today (0190 Binance, 0420 Bybit); extend as 0430+ land (do not pre-populate). */
+export const EXCHANGES = ['binance', 'bybit'] as const
 export type Exchange = (typeof EXCHANGES)[number]
 
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'] as const

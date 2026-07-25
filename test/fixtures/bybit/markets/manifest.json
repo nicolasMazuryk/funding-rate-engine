@@ -1,0 +1,24 @@
+{
+  "capturedAtMs": 1784988919071,
+  "count": 3,
+  "network": "prod",
+  "set": "markets",
+  "source": "ccxt.bybit#loadMarkets (public /v5/market/instruments-info)",
+  "synthetic": [
+    "spot-btc",
+    "inverse-coinm",
+    "dated-expiry",
+    "delisted",
+    "anomaly-bad-funding",
+    "anomaly-zero-funding",
+    "anomaly-missing-precision",
+    "anomaly-zero-contractsize",
+    "anomaly-unparsable-base",
+    "multiplier-cat",
+    "plain-cat",
+    "multiplier-sats",
+    "multiplier-mog"
+  ],
+  "toolVersion": "1",
+  "venue": "bybit"
+}

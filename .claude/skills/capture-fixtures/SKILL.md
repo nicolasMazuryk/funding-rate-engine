@@ -21,6 +21,11 @@ npm run capture -- --venue binance --set private-ws   [--window-ms N] [--out DIR
 npm run capture -- --venue binance --set orders       [--out DIR]
 ```
 
+Since task 0420 `--venue` also accepts **`bybit`** (fixtures under `test/fixtures/bybit/`,
+keys `BYBIT_TESTNET_API_KEY`/`_SECRET`, driver `src/capture/capture-bybit.ts`); a venue is one
+entry in `scripts/capture.ts`'s `DRIVERS` map. Everything below applies per venue, substituting
+the key prefix and fixture root.
+
 - `markets` / `public-ws` are **credential-free** (public REST/WS) — safe to run anytime.
 - `private-ws` / `orders` are **testnet-only** and read `BINANCE_TESTNET_API_KEY` /
   `BINANCE_TESTNET_API_SECRET` from env; absent either, the command fails loud
