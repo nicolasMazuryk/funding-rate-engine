@@ -1,0 +1,41 @@
+{
+  "active": true,
+  "base": "BTC",
+  "baseId": "BTC",
+  "contract": true,
+  "contractSize": 1,
+  "future": false,
+  "id": "BTCUSD",
+  "info": {
+    "baseCoin": "BTC",
+    "category": "COIN-FUTURES",
+    "fundInterval": "8",
+    "minOrderAmount": "5",
+    "minOrderQty": "1",
+    "quoteCoin": "USD",
+    "status": "online",
+    "symbol": "BTCUSD"
+  },
+  "inverse": true,
+  "limits": {
+    "amount": {
+      "min": 1
+    },
+    "cost": {
+      "min": 5
+    }
+  },
+  "linear": false,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 0.001
+  },
+  "quote": "USD",
+  "settle": "BTC",
+  "settleId": "BTC",
+  "spot": false,
+  "swap": true,
+  "symbol": "BTC/USD:BTC",
+  "type": "swap"
+}

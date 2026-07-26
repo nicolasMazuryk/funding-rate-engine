@@ -1,0 +1,32 @@
+{
+  "args": [
+    {
+      "clientOid": "cap-1785080260558-entry-1",
+      "orderId": "2"
+    }
+  ],
+  "code": "0",
+  "connId": "3",
+  "event": "trade",
+  "id": "5",
+  "msg": "Success",
+  "rateLimit": [
+    {
+      "limit": "20",
+      "remaining": "19"
+    }
+  ],
+  "request": {
+    "args": [
+      {
+        "clientOid": "cap-1785080260558-entry-1"
+      }
+    ],
+    "category": "usdt-futures",
+    "id": "5",
+    "op": "trade",
+    "topic": "cancel-order"
+  },
+  "topic": "cancel-order",
+  "ts": "1785080264501"
+}

@@ -1,0 +1,85 @@
+{
+  "active": true,
+  "base": "DEXE",
+  "baseId": "DEXE",
+  "contract": true,
+  "contractSize": 1,
+  "created": 1735034183583,
+  "future": false,
+  "id": "DEXEUSDT",
+  "info": {
+    "baseCoin": "DEXE",
+    "buyLimitPriceRatio": "0.15",
+    "category": "USDT-FUTURES",
+    "deliveryPeriod": "",
+    "deliveryStartTime": "",
+    "deliveryTime": "",
+    "feeRateUpRatio": "0.005",
+    "fundInterval": "1",
+    "isRwa": "NO",
+    "launchTime": "1735034183583",
+    "limitOpenTime": "-1",
+    "maintainTime": "",
+    "makerFeeRate": "0.0002",
+    "maxLeverage": "10",
+    "maxMarketOrderQty": "24000",
+    "maxOrderQty": "160000",
+    "maxPositionNum": "200",
+    "maxProductOrderNum": "400",
+    "maxSymbolOrderNum": "",
+    "minLeverage": "1",
+    "minOrderAmount": "5",
+    "minOrderQty": "0.1",
+    "offTime": "-1",
+    "openCostUpRatio": "0.01",
+    "priceMultiplier": "0.001",
+    "pricePrecision": "3",
+    "quantityMultiplier": "0.1",
+    "quantityPrecision": "1",
+    "quoteCoin": "USDT",
+    "quotePrecision": "",
+    "sellLimitPriceRatio": "0.15",
+    "status": "online",
+    "symbol": "DEXEUSDT",
+    "symbolType": "crypto",
+    "takerFeeRate": "0.0006",
+    "type": "perpetual"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 160000,
+      "min": 0.1
+    },
+    "cost": {
+      "min": 5
+    },
+    "leverage": {
+      "max": 10,
+      "min": 1
+    },
+    "price": {}
+  },
+  "linear": true,
+  "maker": 0.0002,
+  "margin": false,
+  "marginModes": {
+    "cross": true,
+    "isolated": true
+  },
+  "option": false,
+  "precision": {
+    "amount": 0.1,
+    "price": 0.001
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "DEXE/USDT:USDT",
+  "taker": 0.0006,
+  "type": "swap"
+}

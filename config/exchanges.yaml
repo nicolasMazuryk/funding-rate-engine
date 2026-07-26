@@ -97,15 +97,36 @@ okx:
   deltas: {}
 
 bitget:
-  taker_fee_pct: 0.06
-  maker_fee_pct: 0.02
+  taker_fee_pct: 0.06 # live ccxt market.taker on BTCUSDT (0.0006)
+  maker_fee_pct: 0.02 # live ccxt market.maker on BTCUSDT (0.0002)
   submission_stagger_ms: 100
-  rate_limit_reserve_pct: 10
-  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
+  # Bitget publishes no weight model either (task 0440): the UTA caps are request counts per
+  # UID — 10 orders/s for place-order, 20/s for the order-info reads, ~20/s on the public
+  # endpoints. The limiter is one bucket/min split by `rate_limit_reserve_pct`, so 1700/min at
+  # a 35% reserve keeps **both** lanes under their cap: the order lane 595/min ≈ 9.9/s (under
+  # the 10/s place-order cap, and matching the 100 ms submission stagger), the general lane
+  # 1105/min ≈ 18.4/s (under the 20/s read cap). Every Bitget call draws weight 1.
+  # 1800/33 was the first sizing and is wrong by a hair — it puts the general lane at 20.1/s,
+  # *over* the read cap; the testnet `rate-limiter` check caught it (task 0440 Phase 2).
+  rate_limit_reserve_pct: 35
+  rate_limit_weight_per_minute: 1700
   ws_order_adapter: true
+  # v3 hosts, not v2: task 0440 targets the Unified-Trading-Account (UTA) surface, which is
+  # what the native SDK's WS order path (`WebsocketAPIClient`) speaks.
   ws:
-    public_url: wss://ws.bitget.com/v2/ws/public
-    private_url: wss://ws.bitget.com/v2/ws/private
+    public_url: wss://ws.bitget.com/v3/ws/public
+    private_url: wss://ws.bitget.com/v3/ws/private
+  # Bitget has no separate testnet host: demo trading is a **header** on the same REST host
+  # (`PAPTRADING: 1`, ccxt `setSandboxMode` / `demoTrading: true` on the native SDK), only the
+  # WS host differs (`wspap` vs `ws`), as on OKX. The `SUSDT-FUTURES` product type (3 symbols
+  # settled in `SUSDT`) belongs to the **v2 mix** API and is rejected by v3 (`40034`); on
+  # v3/UTA, demo serves the ordinary `USDT-FUTURES` category — 24 symbols, `BTCUSDT` included
+  # (verified live, task 0440). Demo keys are demo-only (the live host answers them `40099`).
+  testnet:
+    ws:
+      public_url: wss://wspap.bitget.com/v3/ws/public
+      private_url: wss://wspap.bitget.com/v3/ws/private
+    rest_url: https://api.bitget.com
   deltas: {}
 
 gateio:

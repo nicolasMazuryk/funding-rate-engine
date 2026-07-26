@@ -28,22 +28,24 @@ The only cross-task memory kept here. Everything else: read the code, the specs,
 - S6 live settled-rate timing (a `FundingSettled` lagging the MAIN fill) → the `amount`-derived fallback is an 0490 shadow concern, not coded.
 - Reconciliation gaps: balance dimension deferred; fills check covers entry rung 1 only; the per-close position check assumes flat (concurrent same-symbol intents ⇒ spurious orphan).
 - `s3a` + LONG co-run guard is single-instance only — fleet-level enforcement is 0520.
-- `config/exchanges.yaml`: WS URLs + `rate_limit_weight_per_minute` for Bitget/Gate.io/KuCoin are placeholders — fix in 0440–0460.
+- `config/exchanges.yaml`: WS URLs + `rate_limit_weight_per_minute` for Gate.io/KuCoin are still placeholders — fix in 0450–0460 (Bitget's are real as of 0440).
 
-### New-venue recipe (0440–0460)
+### New-venue recipe (0450–0460)
 
 - Read the `src/adapters/CLAUDE.md` venue-quirk table + `docs/testnet-notes.md` FIRST.
 - Extend the venue **data maps**, not branches: `EXCHANGES` enum, `scripts/capture.ts` driver map, `scripts/testnet.ts` venue map, `main.ts buildAdapter`.
 - Acceptance proof: `git diff --stat -- src/core/` empty; `--venue binance` testnet still 8/8.
 - Bybit's `fundingIncome` (ccxt `fetchLedger` → `SETTLEMENT`) is the working reference impl.
-- Size `rate_limit_weight_per_minute` so the reserved order lane equals the venue's real order/s cap (Bybit 6000 @ 10 %, OKX 1200 @ 50 %).
+- Serialize price/qty **off the float grid** at the transport (`bitget/ws-orders.ts#toVenueNumber`): the core's tick rounding emits `62785.700000000004`, which Bitget rejects.
+- Read the venue's error code off the **nested** envelope where the SDK throws one (Bitget: HTTP status at the top, venue code at `body.code`), and expect the WS trade API to use a different code space than REST.
+- Size `rate_limit_weight_per_minute` so **both** lanes land under the venue's real caps, not just the order lane (Bybit 6000 @ 10 %, OKX 1200 @ 50 %, Bitget 1700 @ 35 %); the testnet `rate-limiter` check is what catches an off-by-a-hair general lane.
 
 ### Env / tooling gotchas
 
 - Migrations are hand-authored (drizzle-kit needs a TTY); its bundled `@esbuild-kit/*` advisories → revisit at 0530.
 - `test:integration` + e2e need Docker Postgres, opt-in, outside `verify`; host port 5432 is often occupied — use an alt port.
 - Node CLI entries need `scripts/register-ts.mjs` + `--experimental-transform-types`.
-- Never actually ran: `crash-matrix.e2e.test.ts` DoD #9 (kill switch survives crash) typechecks only; Bybit testnet DoD step 3 never ran with real creds (credential-free skip path only).
+- Never actually ran: `crash-matrix.e2e.test.ts` DoD #9 (kill switch survives crash) typechecks only; Bybit testnet DoD step 3 never ran with real creds (credential-free skip path only). Binance/OKX/Bitget testnet tiers have all run credentialed 8/8.
 
 ## Tasks
 
@@ -92,7 +94,7 @@ The only cross-task memory kept here. Everything else: read the code, the specs,
 | 0410 | analytics | done | |
 | 0420 | adapter-bybit | done | |
 | 0430 | adapter-okx | done | |
-| 0440 | adapter-bitget | todo | |
+| 0440 | adapter-bitget | done | |
 | 0450 | adapter-gateio | todo | |
 | 0460 | adapter-kucoin | todo | |
 | 0470 | live-tier-harness | todo | |

@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1785076047879,
+  "count": 20,
+  "network": "prod",
+  "set": "public-ws",
+  "source": "bitget WebsocketClientV3 'update' — ticker (usdt-futures) for BTCUSDT",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "bitget"
+}

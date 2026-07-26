@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1785080264515,
+  "count": 3,
+  "network": "testnet",
+  "set": "orders",
+  "source": "WebsocketAPIClient submitNewOrder/cancelOrder + ccxt fetchOrder(clientOid) — one far-from-market limit, immediately cancelled",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "bitget"
+}

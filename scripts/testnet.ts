@@ -4,15 +4,16 @@
  * machine-readable pass/fail/skip output. Thin CLI over `src/testnet/`, mirroring
  * `scripts/capture.ts`'s idiom; no test code imported (CLI must not depend on `test/`).
  *
- *   npm run test:testnet -- --venue <binance|bybit|okx> [--out PATH] [--json]
+ *   npm run test:testnet -- --venue <binance|bybit|okx|bitget> [--out PATH] [--json]
  *
  * Without testnet credentials, every check reports `skip: no credentials` and the
  * command exits 0 — a missing key is never a red build. With credentials, the exit
  * code is `exitCodeFor(summary)`: 1 iff any check failed (skips never fail the run).
- * OKX has no testnet domain — `--venue okx` runs against **demo trading**, a flag on the
- * production host (`OKX_TESTNET_*`, passphrase included).
+ * Neither OKX nor Bitget has a testnet domain — `--venue okx` / `--venue bitget` run against
+ * **demo trading**, a flag on the production host (`OKX_TESTNET_*` / `BITGET_TESTNET_*`,
+ * passphrase included on both).
  *
- * Adding a venue (0420 Bybit, 0430 OKX; 0440–0460 next) is one {@link VENUE_REGISTRY} entry — its
+ * Adding a venue (0420 Bybit, 0430 OKX, 0440 Bitget; 0450–0460 next) is one {@link VENUE_REGISTRY} entry — its
  * `17` §3 check registry, its context builder and its credential probe. The CLI stays
  * venue-agnostic.
  */
@@ -20,12 +21,15 @@
 import dotenv from 'dotenv'
 import type { ExchangeAdapter } from '../src/core/ports/exchange-adapter.js'
 import { binanceTestnetChecks } from '../src/testnet/binance/registry.js'
+import { bitgetTestnetChecks } from '../src/testnet/bitget/registry.js'
 import { bybitTestnetChecks } from '../src/testnet/bybit/registry.js'
 import {
   createBinanceTestnetContext,
+  createBitgetTestnetContext,
   createBybitTestnetContext,
   createOkxTestnetContext,
   hasBinanceTestnetCredentials,
+  hasBitgetTestnetCredentials,
   hasBybitTestnetCredentials,
   hasOkxTestnetCredentials,
   TESTNET_TOOL_VERSION,
@@ -35,7 +39,7 @@ import { runChecks } from '../src/testnet/runner.js'
 import { exitCodeFor, formatSummaryTable, writeSummary } from '../src/testnet/summary.js'
 import type { Check, CheckContext, TestnetSummary } from '../src/testnet/types.js'
 
-const VENUES = ['binance', 'bybit', 'okx'] as const
+const VENUES = ['binance', 'bybit', 'okx', 'bitget'] as const
 type Venue = (typeof VENUES)[number]
 
 const USAGE = ['Usage:', `  npm run test:testnet -- --venue <${VENUES.join('|')}> [--out PATH] [--json]`].join('\n')
@@ -88,6 +92,14 @@ const VENUE_REGISTRY: Record<Venue, VenueEntry> = {
     checks: okxTestnetChecks,
     createContext: createOkxTestnetContext,
     hasCredentials: hasOkxTestnetCredentials,
+  }),
+  // Bitget has no separate testnet either: `--venue bitget` runs against **demo trading**, a
+  // header on the same host (`PAPTRADING`), with its own demo-only keys + passphrase. The
+  // account must be a Unified Trading Account — the adapter speaks only the v3/UTA surface.
+  bitget: venueEntry({
+    checks: bitgetTestnetChecks,
+    createContext: createBitgetTestnetContext,
+    hasCredentials: hasBitgetTestnetCredentials,
   }),
 }
 

@@ -1,0 +1,70 @@
+{
+  "amount": 0.001,
+  "clientOrderId": "4",
+  "cost": 0,
+  "datetime": "2026-07-26T15:37:43.898Z",
+  "fee": {
+    "currency": "USDT"
+  },
+  "fees": [
+    {
+      "currency": "USDT"
+    }
+  ],
+  "filled": 0,
+  "id": "2",
+  "info": {
+    "amount": "0",
+    "avgPrice": "0",
+    "cancelReason": "",
+    "category": "USDT-FUTURES",
+    "clientOid": "cap-1785080260558-entry-1",
+    "createdTime": "1785080263898",
+    "cumExecQty": "0",
+    "cumExecValue": "0",
+    "delegateType": "normal",
+    "execType": "normal",
+    "feeDetail": [
+      {
+        "fee": "",
+        "feeCoin": ""
+      }
+    ],
+    "holdMode": "one_way_mode",
+    "marginMode": "isolated",
+    "orderId": "2",
+    "orderStatus": "new",
+    "orderType": "limit",
+    "posSide": "long",
+    "price": "62842",
+    "qty": "0.001",
+    "reduceOnly": "NO",
+    "side": "buy",
+    "slLimitPrice": null,
+    "slOrderType": null,
+    "slTriggerBy": null,
+    "stopLoss": null,
+    "stpMode": "none",
+    "symbol": "BTCUSDT",
+    "takeProfit": null,
+    "timeInForce": "gtc",
+    "tpLimitPrice": null,
+    "tpOrderType": null,
+    "tpTriggerBy": null,
+    "tradeSide": "buy_single",
+    "updatedTime": "1785080263900"
+  },
+  "lastTradeTimestamp": 1700000001000,
+  "lastUpdateTimestamp": 1700000001000,
+  "postOnly": false,
+  "price": 62842,
+  "reduceOnly": false,
+  "remaining": 0.001,
+  "side": "buy",
+  "status": "open",
+  "symbol": "BTC/USDT:USDT",
+  "timeInForce": "GTC",
+  "timestamp": 1700000000000,
+  "trades": [],
+  "type": "limit"
+}

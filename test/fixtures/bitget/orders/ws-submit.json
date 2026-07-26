@@ -1,0 +1,41 @@
+{
+  "args": [
+    {
+      "cTime": "1785080263898",
+      "clientOid": "cap-1785080260558-entry-1",
+      "orderId": "2",
+      "symbol": "BTCUSDT"
+    }
+  ],
+  "category": "usdt-futures",
+  "code": "0",
+  "connId": "3",
+  "event": "trade",
+  "id": "1",
+  "msg": "Success",
+  "rateLimit": [
+    {
+      "limit": "20",
+      "remaining": "19"
+    }
+  ],
+  "request": {
+    "args": [
+      {
+        "clientOid": "cap-1785080260558-entry-1",
+        "marginMode": "isolated",
+        "orderType": "limit",
+        "price": "62842",
+        "qty": "0.001",
+        "side": "buy",
+        "symbol": "BTCUSDT"
+      }
+    ],
+    "category": "usdt-futures",
+    "id": "1",
+    "op": "trade",
+    "topic": "place-order"
+  },
+  "topic": "place-order",
+  "ts": "1785080263900"
+}

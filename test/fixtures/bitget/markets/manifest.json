@@ -1,0 +1,19 @@
+{
+  "capturedAtMs": 1785076035778,
+  "count": 6,
+  "network": "prod",
+  "set": "markets",
+  "source": "ccxt.bitget#loadMarkets (public /api/v3/market/instruments, category USDT-FUTURES)",
+  "synthetic": [
+    "spot-btc",
+    "inverse-coinm",
+    "delisted",
+    "anomaly-missing-precision",
+    "anomaly-zero-contractsize",
+    "anomaly-unparsable-base",
+    "anomaly-contractsize-not-one",
+    "plain-bonk"
+  ],
+  "toolVersion": "1",
+  "venue": "bitget"
+}

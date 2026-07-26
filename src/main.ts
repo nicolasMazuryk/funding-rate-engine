@@ -21,6 +21,8 @@ import { createReconciler } from './accounting/reconcile.js'
 import { createRealClock } from './adapters/clock/real-clock.js'
 import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
+import { createBitgetAdapter } from './adapters/exchanges/bitget/adapter.js'
+import { createBitgetClients, createBitgetRateLimiter } from './adapters/exchanges/bitget/factory.js'
 import { createBybitAdapter } from './adapters/exchanges/bybit/adapter.js'
 import { createBybitClients, createBybitRateLimiter } from './adapters/exchanges/bybit/factory.js'
 import { createOkxAdapter } from './adapters/exchanges/okx/adapter.js'
@@ -102,6 +104,22 @@ function buildAdapter(
         client: clients.ccxt,
         clock,
         limiter: createOkxRateLimiter(cfg.exchangeProfile, clock),
+        accountSetup: clients.native,
+        deny: cfg.symbols.deny,
+        submissionStaggerMs: cfg.exchangeProfile.submissionStaggerMs,
+        failures,
+        log,
+      })
+    }
+    case 'bitget': {
+      // Bitget signs with three credentials too, and `createBitgetClients` additionally pins
+      // ccxt to the v3/UTA surface — without that pin ccxt probes the account and silently
+      // routes a non-unified one to the v2 mix endpoints.
+      const clients = createBitgetClients(cfg.exchangeProfile, cfg.secrets)
+      return createBitgetAdapter({
+        client: clients.ccxt,
+        clock,
+        limiter: createBitgetRateLimiter(cfg.exchangeProfile, clock),
         accountSetup: clients.native,
         deny: cfg.symbols.deny,
         submissionStaggerMs: cfg.exchangeProfile.submissionStaggerMs,

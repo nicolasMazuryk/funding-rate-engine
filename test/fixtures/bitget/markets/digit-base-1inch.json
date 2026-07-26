@@ -1,0 +1,85 @@
+{
+  "active": true,
+  "base": "1INCH",
+  "baseId": "1INCH",
+  "contract": true,
+  "contractSize": 1,
+  "created": 0,
+  "future": false,
+  "id": "1INCHUSDT",
+  "info": {
+    "baseCoin": "1INCH",
+    "buyLimitPriceRatio": "0.1",
+    "category": "USDT-FUTURES",
+    "deliveryPeriod": "",
+    "deliveryStartTime": "",
+    "deliveryTime": "",
+    "feeRateUpRatio": "0.005",
+    "fundInterval": "8",
+    "isRwa": "NO",
+    "launchTime": "0",
+    "limitOpenTime": "-1",
+    "maintainTime": "",
+    "makerFeeRate": "0.0002",
+    "maxLeverage": "75",
+    "maxMarketOrderQty": "580000",
+    "maxOrderQty": "3700000",
+    "maxPositionNum": "200",
+    "maxProductOrderNum": "400",
+    "maxSymbolOrderNum": "",
+    "minLeverage": "1",
+    "minOrderAmount": "5",
+    "minOrderQty": "0.1",
+    "offTime": "-1",
+    "openCostUpRatio": "0.01",
+    "priceMultiplier": "0.00001",
+    "pricePrecision": "5",
+    "quantityMultiplier": "0.1",
+    "quantityPrecision": "1",
+    "quoteCoin": "USDT",
+    "quotePrecision": "",
+    "sellLimitPriceRatio": "0.1",
+    "status": "online",
+    "symbol": "1INCHUSDT",
+    "symbolType": "crypto",
+    "takerFeeRate": "0.0006",
+    "type": "perpetual"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 3700000,
+      "min": 0.1
+    },
+    "cost": {
+      "min": 5
+    },
+    "leverage": {
+      "max": 75,
+      "min": 1
+    },
+    "price": {}
+  },
+  "linear": true,
+  "maker": 0.0002,
+  "margin": false,
+  "marginModes": {
+    "cross": true,
+    "isolated": true
+  },
+  "option": false,
+  "precision": {
+    "amount": 0.1,
+    "price": 0.00001
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "1INCH/USDT:USDT",
+  "taker": 0.0006,
+  "type": "swap"
+}

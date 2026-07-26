@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "binance": "^3.6.1",
+    "bitget-api": "^3.2.1",
     "bybit-api": "^4.7.1",
     "ccxt": "^4.5.67",
     "dotenv": "^17.4.2",

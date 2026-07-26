@@ -5,17 +5,24 @@
  * integration smokes) and exposes the narrow surface checks need. `onCleanup` here is
  * a no-op placeholder — `runner.ts` overrides it per-check.
  *
- * One builder per venue (Binance task 0260, Bybit task 0420, OKX task 0430). They share the
- * {@link CheckContext} shape and nothing else — the clients they expose are the venue's
- * own concrete types, since the checks that need raw client access (`assert-flat`,
+ * One builder per venue (Binance task 0260, Bybit task 0420, OKX task 0430, Bitget task 0440).
+ * They share the {@link CheckContext} shape and nothing else — the clients they expose are the
+ * venue's own concrete types, since the checks that need raw client access (`assert-flat`,
  * `error-taxonomy`) are venue-specific by construction. No premature abstraction: a
- * common "venue context" interface would only be the union of three client sets.
+ * common "venue context" interface would only be the union of four client sets.
  */
 
 import { readFileSync } from 'node:fs'
+import { WS_KEY_MAP } from 'bitget-api'
 import { createRealClock } from '../adapters/clock/real-clock.js'
 import { createBinanceAdapter } from '../adapters/exchanges/binance/adapter.js'
 import { type BinanceClients, createBinanceClients } from '../adapters/exchanges/binance/factory.js'
+import { createBitgetAdapter } from '../adapters/exchanges/bitget/adapter.js'
+import {
+  type BitgetClients,
+  createBitgetClients,
+  createBitgetRateLimiter,
+} from '../adapters/exchanges/bitget/factory.js'
 import { createBybitAdapter } from '../adapters/exchanges/bybit/adapter.js'
 import { type BybitClients, createBybitClients, createBybitRateLimiter } from '../adapters/exchanges/bybit/factory.js'
 import { createOkxAdapter } from '../adapters/exchanges/okx/adapter.js'
@@ -239,6 +246,99 @@ export async function createOkxTestnetContext(): Promise<OkxTestnetContext> {
     accountSetup: clients.native,
     ws: clients.wsPublic,
     wsPrivate: clients.wsPrivate,
+    wsApiPrivate: clients.wsApiPrivate,
+    restOrders: clients.native,
+    bus,
+    submissionStaggerMs: profile.submissionStaggerMs,
+    wsOrderRestFallback: profile.deltas.wsOrderRestFallback ?? false,
+  })
+  await adapter.init()
+
+  return {
+    hasCredentials,
+    adapter,
+    clients,
+    clock,
+    bus,
+    events,
+    profile,
+    onCleanup: () => {},
+    async getBalanceFree(): Promise<number> {
+      const balance = await adapter.getBalance()
+      return balance.free
+    },
+  }
+}
+
+// ── Bitget (task 0440, UTA demo trading) ─────────────────────────────────────
+
+/**
+ * Bitget signs with three credentials, as OKX does, so the probe is the same three-way `and`:
+ * key + secret without the passphrase cannot sign a private call (`40011`), and the factory
+ * refuses to build clients from it. `BITGET_TESTNET_PASSPHRASE` keeps the `<VENUE>_TESTNET_*`
+ * naming the prior venues established.
+ */
+export function hasBitgetTestnetCredentials(): boolean {
+  return (
+    !!process.env.BITGET_TESTNET_API_KEY &&
+    !!process.env.BITGET_TESTNET_API_SECRET &&
+    !!process.env.BITGET_TESTNET_PASSPHRASE
+  )
+}
+
+export interface BitgetTestnetContext extends CheckContext {
+  readonly adapter: ExchangeAdapter
+  /**
+   * Raw ccxt/native clients — `assert-flat` needs the raw open-order rows (`symbol`/`orderId`)
+   * and `account-setup`/`error-taxonomy` the native `RestClientV3`, surfaces the
+   * `ExchangeAdapter` port deliberately doesn't expose generically.
+   */
+  readonly clients: BitgetClients
+  readonly clock: Clock
+  readonly bus: EventBus
+  readonly events: readonly EngineEvent[]
+  /**
+   * The **committed** `config/exchanges.yaml` Bitget profile, as on Bybit/OKX — `deltas`/
+   * `rate-limiter` assert the shipped numbers, and the adapter under test is built from it.
+   */
+  readonly profile: ExchangeProfile
+  /** Free quote-asset balance — the fund-dependent checks' self-gate. */
+  getBalanceFree(): Promise<number>
+}
+
+/**
+ * Build the shared adapter/clients once; every check in the registry reuses this one context.
+ *
+ * Bitget demo trading, like OKX's, is a **flag** rather than a network: `network: 'testnet'`
+ * sets `demoTrading: true` on the native clients and ccxt's `PAPTRADING` sandbox header on the
+ * same REST host, and only the WS host differs (`wspap`), which the SDK owns. Demo serves the
+ * ordinary `USDT-FUTURES` category (24 symbols, `BTCUSDT` among them), so no symbol or category
+ * downstream is demo-specific.
+ */
+export async function createBitgetTestnetContext(): Promise<BitgetTestnetContext> {
+  const hasCredentials = hasBitgetTestnetCredentials()
+  const apiKey = process.env.BITGET_TESTNET_API_KEY ?? 'public'
+  const apiSecret = process.env.BITGET_TESTNET_API_SECRET ?? 'public'
+  // The factory fails loud on an absent passphrase, so the credential-free path supplies the
+  // same placeholder as the other two — every credentialed check then skips on `hasCredentials`.
+  const apiPassphrase = process.env.BITGET_TESTNET_PASSPHRASE ?? 'public'
+
+  const clock = createRealClock()
+  const bus = createEventBus()
+  const events: EngineEvent[] = []
+  bus.subscribe((e) => events.push(e))
+
+  const profile = parseExchangeProfiles(readFileSync(EXCHANGES_YAML, 'utf8')).bitget
+  const clients = createBitgetClients(profile, { apiKey, apiSecret, apiPassphrase }, { network: 'testnet' })
+  const adapter = createBitgetAdapter({
+    client: clients.ccxt,
+    clock,
+    limiter: createBitgetRateLimiter(profile, clock),
+    accountSetup: clients.native,
+    ws: clients.wsPublic,
+    wsPublicKey: WS_KEY_MAP.v3Public,
+    wsPrivate: clients.wsPrivate,
+    wsPrivateKey: WS_KEY_MAP.v3Private,
     wsApiPrivate: clients.wsApiPrivate,
     restOrders: clients.native,
     bus,

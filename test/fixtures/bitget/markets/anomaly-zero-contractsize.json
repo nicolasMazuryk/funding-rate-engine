@@ -1,0 +1,41 @@
+{
+  "active": true,
+  "base": "ZERO",
+  "baseId": "ZERO",
+  "contract": true,
+  "contractSize": 0,
+  "future": false,
+  "id": "ZEROUSDT",
+  "info": {
+    "baseCoin": "ZERO",
+    "category": "USDT-FUTURES",
+    "fundInterval": "8",
+    "minOrderAmount": "5",
+    "minOrderQty": "1",
+    "quoteCoin": "USDT",
+    "status": "online",
+    "symbol": "ZEROUSDT"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "min": 1
+    },
+    "cost": {
+      "min": 5
+    }
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 0.001
+  },
+  "quote": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "swap": true,
+  "symbol": "ZERO/USDT:USDT",
+  "type": "swap"
+}

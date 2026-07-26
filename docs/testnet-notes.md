@@ -133,3 +133,73 @@ What follows is what actually fired, not a designed path.
   demo trading rides the production rate limiter. `error-taxonomy` asserts the code table
   across all three arrival shapes plus a live typed `NotFound` (cancel of a never-placed
   `clOrdId` → `51400`), and documents the rate-limit half as a skip.
+
+## Bitget (UTA demo trading)
+
+`npm run test:testnet -- --venue bitget` (task 0440). Credentials: `BITGET_TESTNET_API_KEY` /
+`_API_SECRET` / **`BITGET_TESTNET_PASSPHRASE`** — all three, as on OKX. Absent any of them the
+whole suite skips and exits 0.
+
+**RUN LIVE against a real demo account: 8/8 passed, 0 failed, 0 skipped, flat at exit**
+(three consecutive green runs). What follows is what actually fired, not a designed path.
+
+- **There is no Bitget testnet, and demo is not the `SUSDT-FUTURES` product either.** Demo
+  trading is a header (`PAPTRADING: 1`, ccxt `setSandboxMode(true)` / `demoTrading: true`) on
+  the *production* REST host; only the WS host differs (`wspap`). The `SUSDT-FUTURES` product
+  type (3 symbols settled in `SUSDT`) belongs to the **v2 mix** API and is rejected outright by
+  v3 (`40034`). On v3/UTA the demo account trades the ordinary `USDT-FUTURES` category — 24
+  symbols, `BTCUSDT` among them — so nothing downstream branches on demo vs live. Demo keys are
+  demo-only: the live host answers them `40099`.
+- **The account-level margin switch works from the API here** — the one unknown 0440 carried in.
+  The demo sub-account came up `accountLevel: 'basic'`, `holdMode: 'hedge_mode'`;
+  `POST /api/v3/account/adjust-mode {mode:'isolated'}` and
+  `POST /api/v3/account/set-hold-mode {holdMode:'one_way_mode'}` both answered `00000` and the
+  read-back showed `isolated` / `one_way_mode`. So Bitget is unlike Bybit (account-wide but
+  fine) *and* unlike OKX (privileged, UI-only): a plain write. `account-setup` still treats a
+  refusal as a skip-with-reason plus read-back, because isolation ultimately rests on the
+  per-order `marginMode: 'isolated'` every submit states.
+- **Applied leverage has no dedicated read endpoint.** It comes back on
+  `getAccountSettings().symbolConfigList` — one row per symbol carrying `marginMode` and
+  `leverage` (and `longLeverage`/`shortLeverage`). The row only appears **after** the first
+  `set-leverage`, so its absence is itself the "the write did not land" signal.
+- **The native REST throw nests the venue code.** `RestClientV3` rejects with a plain object
+  (not an `Error`) shaped `{code: 400, message: 'Bad Request', body: {code: '25204', msg: …}}` —
+  the top-level `code` is the **HTTP status**. The first `error-map.ts` read it and classified
+  every REST rejection as one retryable `NetworkError`; `body.code` now wins, and `String(err)`
+  is never used for the message (it would be `[object Object]`). The thrown object also carries
+  `requestOptions.apiKey` — never log a raw Bitget error.
+- **The WS trade API answers in a different code space than REST.** Same venue, same operation:
+  a tick-grid violation is `43028` on the WS-API and `25244` on REST; a never-placed cancel is
+  `25204` on both; a duplicate `clientOid` is `50060`; below-minimum quantity `45111`; below
+  minimum order value `43027`; position-tier breach `40763`. All are tabled now; anything
+  untabled stays a logged retryable `NetworkError`.
+- **The core's tick rounding needs adapter-side serialization.** `roundPrice` produces
+  `62785.700000000004` for a 0.1 tick (binary float), and `String()`-ing that got the order
+  rejected `43028 "Please enter an integer multiple of 0.1 for price"`. `ws-orders.ts`
+  serializes price/qty through `Number(v.toPrecision(12))`. Nothing in `src/core/` changed.
+- **The SDK's on-connect login races the socket.** `bitget-api@3.2.1` fires its private login
+  from `onWsOpen` and it can hit `readyState 0 (CONNECTING)` ("WebSocket is not open"), after
+  which the socket closes and reconnects; during one run that churn burned a submit's entire
+  retry budget (`WsTimeout` ×3, and `ws_order_rest_fallback` is off for this venue). Fixed the
+  OKX way: the WS-API order client is constructed with `authPrivateConnectionsOnConnect: false`
+  (it subscribes to no topics, so the login `sendWSAPIRequest` performs on first use is the
+  right one). The private *stream* client keeps auth-on-connect — that is what gates its topic
+  subscriptions. No churn observed since.
+- **The published rate-limit sizing was wrong by a hair, and the check caught it.** 1800/min at
+  a 33 % reserve puts the general lane at 20.1/s, *over* the venue's 20/s read cap. Now
+  1700/min at 35 %: order 595/min ≈ 9.9/s, general 1105/min ≈ 18.4/s.
+- **One fused public channel.** `ticker` carries last price *and* funding rate + next funding
+  time (Bybit's shape, not OKX's two channels), and `streams` saw both a `FundingPredicted` and
+  a `MarketTick` for BTC within seconds.
+- **The UTA private topics push nothing on a quiet account.** A passive 20 s subscription to
+  `order`/`fill`/`position`/`account` captured **zero** frames, so `capture-bitget.ts`'s
+  `private-ws` set now places and cancels one far-from-market limit inside the window; the
+  fixture holds the `position`/`account` snapshots plus the `order` new/cancelled rows.
+- **Funding-fee delivery is still unconfirmed live** — the same gap as OKX. Bitget has no
+  funding channel at all; the adapter infers the credit from the `account` balance delta, and
+  REST `fetchFundingHistory` (a real ccxt UTA branch, no bill-type filter needed) is the money
+  truth. The demo account held no position across a settlement during the runs, so `deltas`
+  exercised the REST read over a historical 24 h window and got zero rows — not a failure.
+- **Real 429 induction is unsafe** (demo rides the production limiter), so `error-taxonomy`
+  asserts the table across all three arrival shapes plus a live typed `NotFound`
+  (cancel of a never-placed `clientOid` → `25204`) and documents the rate-limit half as a skip.

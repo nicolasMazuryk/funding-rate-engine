@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1785080246216,
+  "count": 6,
+  "network": "testnet",
+  "set": "private-ws",
+  "source": "bitget WebsocketClientV3 'update' — UTA topics order,fill,position,account, driven by one far-from-market limit placed and cancelled inside the window",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "bitget"
+}

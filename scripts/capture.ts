@@ -1,14 +1,14 @@
 /**
  * `npm run capture` — records real venue responses into committed fixtures (task
  * 0250; spec `0000` §5). Thin CLI over the per-venue capture drivers
- * (`src/capture/capture-{binance,bybit,okx}.ts`); no test code imported (CLI must not
+ * (`src/capture/capture-{binance,bybit,okx,bitget}.ts`); no test code imported (CLI must not
  * depend on `test/`).
  *
- *   npm run capture -- --venue binance|bybit|okx --set markets|public-ws|private-ws|orders \
+ *   npm run capture -- --venue binance|bybit|okx|bitget --set markets|public-ws|private-ws|orders \
  *     [--count N] [--window-ms N] [--out DIR]
  *
  * `private-ws`/`orders` read testnet keys from env (`<VENUE>_TESTNET_API_KEY` /
- * `_SECRET`, plus `OKX_TESTNET_PASSPHRASE` on OKX — that venue signs with three
+ * `_SECRET`, plus `OKX_TESTNET_PASSPHRASE` / `BITGET_TESTNET_PASSPHRASE` on those venues, which sign with three
  * credentials) and fail loud, non-zero, when absent — mirrors the integration-gate
  * convention (skip loudly, never silently no-op).
  *
@@ -16,7 +16,9 @@
  * exports the same four set functions with the same signatures.
  */
 
+import dotenv from 'dotenv'
 import * as binance from '../src/capture/capture-binance.js'
+import * as bitget from '../src/capture/capture-bitget.js'
 import * as bybit from '../src/capture/capture-bybit.js'
 import * as okx from '../src/capture/capture-okx.js'
 
@@ -31,7 +33,7 @@ interface Driver {
   captureOrders(outDir?: string): Promise<void>
 }
 
-const DRIVERS: Record<string, Driver> = { binance, bybit, okx }
+const DRIVERS: Record<string, Driver> = { binance, bybit, okx, bitget }
 const VENUES = Object.keys(DRIVERS)
 
 const USAGE = [
@@ -97,6 +99,9 @@ function parseArgs(argv: readonly string[]): Args {
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
+  // Credentials live in the workspace `.env` (gitignored), as `scripts/testnet.ts` reads them;
+  // a real shell env var still wins, since dotenv never overwrites.
+  dotenv.config({ quiet: true })
   if (args.venue === undefined) fail('--venue is required')
   const driver = DRIVERS[args.venue]
   if (driver === undefined) fail(`unsupported venue '${args.venue}' (one of: ${VENUES.join(', ')})`)
