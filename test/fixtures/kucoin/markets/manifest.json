@@ -1,0 +1,19 @@
+{
+  "capturedAtMs": 1785092624498,
+  "count": 9,
+  "network": "prod",
+  "set": "markets",
+  "source": "ccxt.kucoinfutures#loadMarkets (public GET /api/v1/contracts/active)",
+  "synthetic": [
+    "spot-btc",
+    "delisted",
+    "anomaly-missing-precision",
+    "anomaly-zero-contractsize",
+    "anomaly-unparsable-base",
+    "anomaly-multiplier-mismatch",
+    "anomaly-funding-interval",
+    "plain-bonk"
+  ],
+  "toolVersion": "1",
+  "venue": "kucoin"
+}

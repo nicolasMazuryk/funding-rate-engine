@@ -19,7 +19,7 @@ import { STRATEGY_IDS, type StrategyId } from './canonical.js'
 import { zodErrorToConfigError } from './schema.js'
 import { parseYamlMapping } from './yaml.js'
 
-export const EXCHANGE_IDS = ['binance', 'bybit', 'okx', 'bitget', 'gateio', 'kucoin'] as const
+export const EXCHANGE_IDS = ['binance', 'bybit', 'okx', 'bitget', 'kucoin'] as const
 export type ExchangeId = (typeof EXCHANGE_IDS)[number]
 
 /** Per-exchange delta shape (`00_globals.md` §6): only these three keys may override. */
@@ -68,7 +68,7 @@ export const ExchangeProfileYamlSchema = z
   })
   .strict()
 
-/** Fixed 6-key container — every venue present, no unknown venues (`.strict()`). */
+/** Fixed 5-key container — every venue present, no unknown venues (`.strict()`). */
 export const ExchangesYamlSchema = z
   .object(
     Object.fromEntries(EXCHANGE_IDS.map((id) => [id, ExchangeProfileYamlSchema])) as Record<

@@ -25,8 +25,22 @@ function withOkxDeltas(yaml: string): string {
   return yaml.slice(0, start) + block + yaml.slice(end)
 }
 
+/**
+ * Cut one venue block out of the YAML by index, same dialect as `withOkxDeltas()`.
+ * Deliberately NOT `replace(/kucoin:[\s\S]*$/, '')`: that only removes one venue while
+ * kucoin happens to be the last block, and would silently strip every venue appended
+ * after it — the test would stay green and stop testing "a *missing* venue".
+ */
+function withoutBlock(yaml: string, key: string): string {
+  const start = yaml.indexOf(key)
+  if (start < 0) throw new Error(`exchanges.yaml no longer has a ${key.trim()} block`)
+  const next = yaml.slice(start + key.length).search(/^\w[\w.-]*:$/m)
+  const end = next < 0 ? yaml.length : start + key.length + next
+  return yaml.slice(0, start) + yaml.slice(end)
+}
+
 describe('parseExchangeProfiles (09_configuration §4)', () => {
-  it('parses the committed config/exchanges.yaml clean with all 6 venues', () => {
+  it('parses the committed config/exchanges.yaml clean with all 5 venues', () => {
     const profiles = parseExchangeProfiles(exchangesYaml)
     for (const id of EXCHANGE_IDS) expect(profiles[id]).toBeDefined()
     expect(profiles.binance.takerFeePct).toBe(0.05)
@@ -60,7 +74,7 @@ describe('parseExchangeProfiles (09_configuration §4)', () => {
   })
 
   it('rejects a missing venue', () => {
-    const withoutKucoin = exchangesYaml.replace(/kucoin:[\s\S]*$/, '')
+    const withoutKucoin = withoutBlock(exchangesYaml, '\nkucoin:\n')
     try {
       parseExchangeProfiles(withoutKucoin)
       throw new Error('expected throw')

@@ -1,0 +1,51 @@
+{
+  "active": true,
+  "base": "ODD",
+  "baseId": "ODD",
+  "contract": true,
+  "contractSize": 1,
+  "future": false,
+  "id": "ODDUSDTM",
+  "info": {
+    "baseCurrency": "ODD",
+    "fundingRateGranularity": 10800000,
+    "lotSize": 1,
+    "multiplier": 1,
+    "quoteCurrency": "USDT",
+    "settleCurrency": "USDT",
+    "status": "Open",
+    "symbol": "ODDUSDTM",
+    "type": "FFWCSX"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 1000000,
+      "min": 1
+    },
+    "cost": {},
+    "leverage": {
+      "max": 20,
+      "min": 1
+    },
+    "price": {
+      "max": 1000000,
+      "min": 0.001
+    }
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 0.001
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "ODD/USDT:USDT",
+  "type": "swap"
+}

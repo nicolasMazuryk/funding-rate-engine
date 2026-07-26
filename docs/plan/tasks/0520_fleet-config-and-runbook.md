@@ -1,11 +1,11 @@
 # 0520 — Fleet config generation + operations runbook
 
 **Phase:** 8 — Fleet
-**Depends on:** 0420, 0430, 0440, 0450, 0460, 0510
+**Depends on:** 0420, 0430, 0440, 0460, 0510 (0450 / Gate.io skipped — venue dropped, STATUS 0450)
 **Spec references:** `16_fleet_deployment.md` §2 (the 5×6 fleet), §4 (operating the fleet), §5 (what deployment does not add); `09_configuration.md` §7 (config change management); `15_accounting_and_reconciliation.md` §5 (rollup usage)
 
 ## Objective
-The full fleet made concrete: a generator that enumerates the strategy×venue matrix into per-instance env files + strategy YAMLs + compose services (30 cells in the 5×6 illustration; the real matrix respects per-venue capability facts recorded in Phase 6, e.g. WS-order availability), a secrets template per sub-account, and the operations runbook covering deploy, config-change-as-redeploy, per-instance and fleet-wide kill-switch operation, and rollup queries.
+The full fleet made concrete: a generator that enumerates the strategy×venue matrix into per-instance env files + strategy YAMLs + compose services (spec `16` §2 illustrates 30 cells over 6 venues; Gate.io was dropped, so the real matrix is 7 strategies × **5** venues minus the cells per-venue capability facts from Phase 6 forbid, e.g. WS-order availability), a secrets template per sub-account, and the operations runbook covering deploy, config-change-as-redeploy, per-instance and fleet-wide kill-switch operation, and rollup queries.
 
 ## Context for the agent
 Adding a strategy or venue is config + secrets, no code (`16` §2). The matrix must honor constraints from config validation: S3a never co-runs with LONG strategies *in one instance* (each instance is one strategy, so the matrix itself is fine — the guard protects against misconfiguration); WS-mandatory strategies (S1-WS/S2/S6) can only be generated for venues whose profile provides WS orders or sets `ws_order_rest_fallback` (facts from 0420–0460) — the generator must **refuse** invalid cells with a clear message, not emit them. Per-exchange deltas apply through the normal merge (nothing bespoke per venue). Fleet-wide "pause all" is just toggling every instance's kill switch — no shared runtime coupling (`16` §4/§5).

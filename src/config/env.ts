@@ -13,8 +13,15 @@ import { STRATEGY_IDS, type StrategyId } from './canonical.js'
 import { ConfigParseError } from './errors.js'
 import { zodErrorToConfigError } from './schema.js'
 
-/** The in-repo adapters today (0190 Binance, 0420 Bybit, 0430 OKX, 0440 Bitget); extend as 0450+ land (do not pre-populate). */
-export const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget'] as const
+/**
+ * The in-repo adapters today (0190 Binance, 0420 Bybit, 0430 OKX, 0440 Bitget, 0460 KuCoin);
+ * do not pre-populate a venue whose adapter does not exist. Gate.io was dropped (STATUS 0450),
+ * so this list is now complete: it matches `EXCHANGE_IDS` exactly.
+ *
+ * Adding an id here without a matching `case` in `main.ts`'s `buildAdapter` is a **silent**
+ * mis-wire, because that switch has a `default:` — see its `never` exhaustiveness guard.
+ */
+export const EXCHANGES = ['binance', 'bybit', 'okx', 'bitget', 'kucoin'] as const
 export type Exchange = (typeof EXCHANGES)[number]
 
 const LOG_LEVELS = ['trace', 'debug', 'info', 'warn', 'error', 'fatal', 'silent'] as const

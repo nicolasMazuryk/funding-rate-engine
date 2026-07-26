@@ -1,0 +1,51 @@
+{
+  "active": true,
+  "base": "ZERO",
+  "baseId": "ZERO",
+  "contract": true,
+  "contractSize": 0,
+  "future": false,
+  "id": "ZEROUSDTM",
+  "info": {
+    "baseCurrency": "ZERO",
+    "fundingRateGranularity": 28800000,
+    "lotSize": 1,
+    "multiplier": 0,
+    "quoteCurrency": "USDT",
+    "settleCurrency": "USDT",
+    "status": "Open",
+    "symbol": "ZEROUSDTM",
+    "type": "FFWCSX"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 1000000,
+      "min": 1
+    },
+    "cost": {},
+    "leverage": {
+      "max": 20,
+      "min": 1
+    },
+    "price": {
+      "max": 1000000,
+      "min": 0.001
+    }
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 0.001
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "ZERO/USDT:USDT",
+  "type": "swap"
+}

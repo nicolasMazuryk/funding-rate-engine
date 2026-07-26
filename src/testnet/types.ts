@@ -43,10 +43,18 @@ export interface Check<Ctx extends CheckContext = CheckContext> {
   run(ctx: Ctx): Promise<CheckOutcome>
 }
 
+/**
+ * Which environment the run actually hit. Four venues have a sandbox (a domain, a flag or a
+ * header) and report `testnet`; KuCoin has none at all (task 0460), so its read-only tier runs
+ * against **live production with live keys** and must say so — a summary claiming `testnet`
+ * there would be a false record of what the run touched.
+ */
+export type TestnetNetwork = 'testnet' | 'live-readonly'
+
 /** The JSON summary artifact — self-interpretable pass/fail/skip result (spec `0000` §3). */
 export interface TestnetSummary {
   readonly venue: string
-  readonly network: 'testnet'
+  readonly network: TestnetNetwork
   readonly toolVersion: string
   readonly startedAtMs: number
   readonly durationMs: number

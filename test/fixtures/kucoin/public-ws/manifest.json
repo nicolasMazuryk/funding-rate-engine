@@ -1,0 +1,10 @@
+{
+  "capturedAtMs": 1785092708533,
+  "count": 40,
+  "network": "prod",
+  "set": "public-ws",
+  "source": "kucoin WebsocketClient 'update' — /contract/instrument + /contractMarket/ticker for XBTUSDTM",
+  "synthetic": [],
+  "toolVersion": "1",
+  "venue": "kucoin"
+}

@@ -7,11 +7,13 @@
  * order or flatten a position.
  */
 
-import type { Check, CheckContext, CheckResult, CheckStatus, TestnetSummary } from './types.js'
+import type { Check, CheckContext, CheckResult, CheckStatus, TestnetNetwork, TestnetSummary } from './types.js'
 
 export interface RunChecksOptions {
   /** Injected so the runner never calls `Date.now()` directly (mirrors `Clock` elsewhere). */
   readonly now: () => number
+  /** What the run hit — recorded verbatim in the summary (`live-readonly` on KuCoin, task 0460). */
+  readonly network: TestnetNetwork
 }
 
 /**
@@ -70,7 +72,7 @@ export async function runChecks<Ctx extends CheckContext>(
 
   return {
     venue,
-    network: 'testnet',
+    network: opts.network,
     toolVersion,
     startedAtMs,
     durationMs: opts.now() - startedAtMs,

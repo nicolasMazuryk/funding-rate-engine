@@ -4,18 +4,20 @@
  * machine-readable pass/fail/skip output. Thin CLI over `src/testnet/`, mirroring
  * `scripts/capture.ts`'s idiom; no test code imported (CLI must not depend on `test/`).
  *
- *   npm run test:testnet -- --venue <binance|bybit|okx|bitget> [--out PATH] [--json]
+ *   npm run test:testnet -- --venue <binance|bybit|okx|bitget|kucoin> [--out PATH] [--json]
  *
  * Without testnet credentials, every check reports `skip: no credentials` and the
  * command exits 0 — a missing key is never a red build. With credentials, the exit
  * code is `exitCodeFor(summary)`: 1 iff any check failed (skips never fail the run).
  * Neither OKX nor Bitget has a testnet domain — `--venue okx` / `--venue bitget` run against
  * **demo trading**, a flag on the production host (`OKX_TESTNET_*` / `BITGET_TESTNET_*`,
- * passphrase included on both).
+ * passphrase included on both). KuCoin has no sandbox in any form, so `--venue kucoin` is a
+ * **read-only tier against live production** and its summary records `network: 'live-readonly'`
+ * rather than claiming a testnet run.
  *
- * Adding a venue (0420 Bybit, 0430 OKX, 0440 Bitget; 0450–0460 next) is one {@link VENUE_REGISTRY} entry — its
- * `17` §3 check registry, its context builder and its credential probe. The CLI stays
- * venue-agnostic.
+ * Adding a venue (0420 Bybit, 0430 OKX, 0440 Bitget, 0460 KuCoin) is one {@link VENUE_REGISTRY}
+ * entry — its check registry, its context builder, its credential probe and (only where it is
+ * not a testnet) its network label. The CLI stays venue-agnostic: data, not a branch.
  */
 
 import dotenv from 'dotenv'
@@ -27,19 +29,22 @@ import {
   createBinanceTestnetContext,
   createBitgetTestnetContext,
   createBybitTestnetContext,
+  createKucoinTestnetContext,
   createOkxTestnetContext,
   hasBinanceTestnetCredentials,
   hasBitgetTestnetCredentials,
   hasBybitTestnetCredentials,
+  hasKucoinCredentials,
   hasOkxTestnetCredentials,
   TESTNET_TOOL_VERSION,
 } from '../src/testnet/context.js'
+import { kucoinReadOnlyChecks } from '../src/testnet/kucoin/registry.js'
 import { okxTestnetChecks } from '../src/testnet/okx/registry.js'
 import { runChecks } from '../src/testnet/runner.js'
 import { exitCodeFor, formatSummaryTable, writeSummary } from '../src/testnet/summary.js'
-import type { Check, CheckContext, TestnetSummary } from '../src/testnet/types.js'
+import type { Check, CheckContext, TestnetNetwork, TestnetSummary } from '../src/testnet/types.js'
 
-const VENUES = ['binance', 'bybit', 'okx', 'bitget'] as const
+const VENUES = ['binance', 'bybit', 'okx', 'bitget', 'kucoin'] as const
 type Venue = (typeof VENUES)[number]
 
 const USAGE = ['Usage:', `  npm run test:testnet -- --venue <${VENUES.join('|')}> [--out PATH] [--json]`].join('\n')
@@ -52,6 +57,8 @@ const USAGE = ['Usage:', `  npm run test:testnet -- --venue <${VENUES.join('|')}
  */
 interface VenueEntry {
   readonly checks: readonly { readonly name: string; readonly specRef: string }[]
+  /** What this venue's tier hits — `live-readonly` on KuCoin, which has no sandbox at all. */
+  readonly network: TestnetNetwork
   hasCredentials(): boolean
   run(venue: Venue): Promise<TestnetSummary>
 }
@@ -60,14 +67,18 @@ function venueEntry<Ctx extends CheckContext & { readonly adapter: ExchangeAdapt
   readonly checks: readonly Check<Ctx>[]
   readonly createContext: () => Promise<Ctx>
   readonly hasCredentials: () => boolean
+  /** Defaults to `testnet`; only KuCoin overrides it. */
+  readonly network?: TestnetNetwork
 }): VenueEntry {
+  const network = entry.network ?? 'testnet'
   return {
     checks: entry.checks,
+    network,
     hasCredentials: entry.hasCredentials,
     async run(venue: Venue): Promise<TestnetSummary> {
       const ctx = await entry.createContext()
       try {
-        return await runChecks(venue, TESTNET_TOOL_VERSION, entry.checks, ctx, { now: () => Date.now() })
+        return await runChecks(venue, TESTNET_TOOL_VERSION, entry.checks, ctx, { now: () => Date.now(), network })
       } finally {
         await ctx.adapter.close() // sockets/timers down even if the runner itself blew up
       }
@@ -100,6 +111,16 @@ const VENUE_REGISTRY: Record<Venue, VenueEntry> = {
     checks: bitgetTestnetChecks,
     createContext: createBitgetTestnetContext,
     hasCredentials: hasBitgetTestnetCredentials,
+  }),
+  // KuCoin has no sandbox in any form (decommissioned; `setSandboxMode` fails silently), so
+  // `--venue kucoin` runs a **read-only** six-check tier against live production with live keys
+  // — hence `network: 'live-readonly'` in the summary and the extra `KUCOIN_LIVE_READONLY=1`
+  // opt-in in its credential probe. No order path, no cancels, no flatten (`src/testnet/kucoin/`).
+  kucoin: venueEntry({
+    checks: kucoinReadOnlyChecks,
+    createContext: createKucoinTestnetContext,
+    hasCredentials: hasKucoinCredentials,
+    network: 'live-readonly',
   }),
 }
 
@@ -147,7 +168,11 @@ function defaultSummaryPath(venue: Venue): string {
 }
 
 /** All-skip summary emitted when no testnet credentials are present — exits 0, never red. */
-function skippedSummary(venue: Venue, checkNames: readonly { name: string; specRef: string }[]): TestnetSummary {
+function skippedSummary(
+  venue: Venue,
+  network: TestnetNetwork,
+  checkNames: readonly { name: string; specRef: string }[],
+): TestnetSummary {
   const nowMs = Date.now()
   const results = checkNames.map((c) => ({
     name: c.name,
@@ -158,7 +183,7 @@ function skippedSummary(venue: Venue, checkNames: readonly { name: string; specR
   }))
   return {
     venue,
-    network: 'testnet',
+    network,
     toolVersion: TESTNET_TOOL_VERSION,
     startedAtMs: nowMs,
     durationMs: 0,
@@ -181,7 +206,9 @@ async function main(): Promise<void> {
   const outPath = args.out ?? defaultSummaryPath(venue)
 
   const entry = VENUE_REGISTRY[venue]
-  const summary: TestnetSummary = entry.hasCredentials() ? await entry.run(venue) : skippedSummary(venue, entry.checks)
+  const summary: TestnetSummary = entry.hasCredentials()
+    ? await entry.run(venue)
+    : skippedSummary(venue, entry.network, entry.checks)
 
   writeSummary(outPath, summary)
 

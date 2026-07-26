@@ -1,0 +1,38 @@
+{
+  "active": true,
+  "base": "BTC",
+  "baseId": "BTC",
+  "contract": false,
+  "contractSize": null,
+  "future": false,
+  "id": "BTC-USDT",
+  "info": {
+    "baseCurrency": "BTC",
+    "enableTrading": true,
+    "quoteCurrency": "USDT",
+    "symbol": "BTC-USDT"
+  },
+  "inverse": null,
+  "limits": {
+    "amount": {
+      "min": 0.00001
+    },
+    "cost": {
+      "min": 0.1
+    }
+  },
+  "linear": null,
+  "option": false,
+  "precision": {
+    "amount": 1e-8,
+    "price": 0.1
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": null,
+  "settleId": null,
+  "spot": true,
+  "swap": false,
+  "symbol": "BTC/USDT",
+  "type": "spot"
+}

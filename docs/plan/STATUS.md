@@ -28,17 +28,22 @@ The only cross-task memory kept here. Everything else: read the code, the specs,
 - S6 live settled-rate timing (a `FundingSettled` lagging the MAIN fill) → the `amount`-derived fallback is an 0490 shadow concern, not coded.
 - Reconciliation gaps: balance dimension deferred; fills check covers entry rung 1 only; the per-close position check assumes flat (concurrent same-symbol intents ⇒ spurious orphan).
 - `s3a` + LONG co-run guard is single-instance only — fleet-level enforcement is 0520.
-- `config/exchanges.yaml`: WS URLs + `rate_limit_weight_per_minute` for Gate.io/KuCoin are still placeholders — fix in 0450–0460 (Bitget's are real as of 0440).
+- **[high]** KuCoin's **order path is still unverified against the venue** even though its tier ran credentialed 6/6 on live: no sandbox exists and the tier is read-only by design, so `ws-orders.ts` / `account-setup.ts` are typechecked + fixture-tested and nothing more. 0470/0480 must not assume otherwise. Its `private-ws`/`orders` fixtures are hand-authored for the same reason, and the funding-fee **sign** on `position.settlement` is unconfirmed. What *is* live-verified: markets/funding/account reads, both public topics, the private WS handshake + subscriptions, the error taxonomy, and flatness.
+- **Gate.io dropped** (user decision; 0450 skipped, no adapter will exist). `EXCHANGE_IDS` + `config/exchanges.yaml` are now a fixed **5**-key pair. `docs/specs/*` still say six venues — left untouched deliberately (historical source of truth); this note is the deviation record. `docs/plan/tasks/0450_adapter-gateio.md` is kept and marked SKIPPED so a later agent reads a decision, not a missing file.
 
-### New-venue recipe (0450–0460)
+### New-venue recipe (0460)
 
 - Read the `src/adapters/CLAUDE.md` venue-quirk table + `docs/testnet-notes.md` FIRST.
 - Extend the venue **data maps**, not branches: `EXCHANGES` enum, `scripts/capture.ts` driver map, `scripts/testnet.ts` venue map, `main.ts buildAdapter`.
 - Acceptance proof: `git diff --stat -- src/core/` empty; `--venue binance` testnet still 8/8.
 - Bybit's `fundingIncome` (ccxt `fetchLedger` → `SETTLEMENT`) is the working reference impl.
 - Serialize price/qty **off the float grid** at the transport (`bitget/ws-orders.ts#toVenueNumber`): the core's tick rounding emits `62785.700000000004`, which Bitget rejects.
-- Read the venue's error code off the **nested** envelope where the SDK throws one (Bitget: HTTP status at the top, venue code at `body.code`), and expect the WS trade API to use a different code space than REST.
-- Size `rate_limit_weight_per_minute` so **both** lanes land under the venue's real caps, not just the order lane (Bybit 6000 @ 10 %, OKX 1200 @ 50 %, Bitget 1700 @ 35 %); the testnet `rate-limiter` check is what catches an off-by-a-hair general lane.
+- Read the venue's error code off the **nested** envelope where the SDK throws one (Bitget: HTTP status at the top, venue code at `body.code`), and expect the WS trade API to use a different code space than REST. On KuCoin the HTTP status is not even a failure signal — business rejections arrive as HTTP **200** with the real code at `body.code`.
+- **Do not assume a venue has an order-not-found *code*.** KuCoin reports it as its generic parameter-error code `100001` plus the message key `error.getOrder.orderNotExist`, so the map matches the message ahead of the table for that one key. Tabling the code would swallow real rejections, since `11` §6 treats a not-found cancel as "already gone". The testnet `error-taxonomy` check is what caught it, on the first credentialed run — a reason to keep that check's live probe.
+- Size `rate_limit_weight_per_minute` so **both** lanes land under the venue's real caps, not just the order lane (Bybit 6000 @ 10 %, OKX 1200 @ 50 %, Bitget 1700 @ 35 %, KuCoin 3600 @ 33 %); the testnet `rate-limiter` check is what catches an off-by-a-hair general lane.
+- **Check whether the venue's quoted price is per *prefixed* unit before folding a symbol prefix into `contractSize`.** Binance/Bybit/Bitget fold it; KuCoin must not, because there the prefix is already inside both the price and `multiplier`, and folding again under-sizes 1000× (task 0460, probed live). The same question is now open against the three siblings — see SUGGESTIONS.
+- Deviations recorded at 0460, all deliberate: `shared/reconnect.ts` needed **no** `connect(): Promise<Endpoint>` hook (the KuCoin SDK owns the bullet-token handshake internally and emits the same events as its siblings), contradicting the 0460 task file's implementation note; the testnet summary's `network` widened from the literal `'testnet'` to `'testnet' | 'live-readonly'`; and KuCoin's tier reads `KUCOIN_API_*` + `KUCOIN_LIVE_READONLY=1` rather than `<VENUE>_TESTNET_*`, since there is no KuCoin testnet to name.
+- `clientOid` ceilings are the thing to check first on a new venue: KuCoin's 40 chars clears the core's 36 (bare length guard), Bitget's 32 does not, OKX needs a real escape codec. A venue that demanded UUIDs would need a **crash-safe** id map, not a submit-time in-memory one (`11` §4).
 
 ### Env / tooling gotchas
 
@@ -95,8 +100,8 @@ The only cross-task memory kept here. Everything else: read the code, the specs,
 | 0420 | adapter-bybit | done | |
 | 0430 | adapter-okx | done | |
 | 0440 | adapter-bitget | done | |
-| 0450 | adapter-gateio | todo | |
-| 0460 | adapter-kucoin | todo | |
+| 0450 | adapter-gateio | done | skipped by decision — venue dropped, no adapter |
+| 0460 | adapter-kucoin | done | read-only live tier (no sandbox exists); order path never venue-verified |
 | 0470 | live-tier-harness | todo | |
 | 0480 | live-verification-binance | todo | |
 | 0490 | s6-shadow | todo | |

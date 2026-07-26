@@ -1,16 +1,18 @@
 /**
  * `npm run capture` — records real venue responses into committed fixtures (task
  * 0250; spec `0000` §5). Thin CLI over the per-venue capture drivers
- * (`src/capture/capture-{binance,bybit,okx,bitget}.ts`); no test code imported (CLI must not
- * depend on `test/`).
+ * (`src/capture/capture-{binance,bybit,okx,bitget,kucoin}.ts`); no test code imported (CLI must
+ * not depend on `test/`).
  *
- *   npm run capture -- --venue binance|bybit|okx|bitget --set markets|public-ws|private-ws|orders \
- *     [--count N] [--window-ms N] [--out DIR]
+ *   npm run capture -- --venue binance|bybit|okx|bitget|kucoin \
+ *     --set markets|public-ws|private-ws|orders [--count N] [--window-ms N] [--out DIR]
  *
  * `private-ws`/`orders` read testnet keys from env (`<VENUE>_TESTNET_API_KEY` /
  * `_SECRET`, plus `OKX_TESTNET_PASSPHRASE` / `BITGET_TESTNET_PASSPHRASE` on those venues, which sign with three
  * credentials) and fail loud, non-zero, when absent — mirrors the integration-gate
- * convention (skip loudly, never silently no-op).
+ * convention (skip loudly, never silently no-op). On **kucoin** those two sets fail loud
+ * unconditionally: the venue has no sandbox, so capturing them would place a real live order —
+ * the fixtures are hand-authored instead (`src/capture/capture-kucoin.ts`).
  *
  * A new venue is one entry in {@link DRIVERS} (data, not a branch): its driver module
  * exports the same four set functions with the same signatures.
@@ -20,6 +22,7 @@ import dotenv from 'dotenv'
 import * as binance from '../src/capture/capture-binance.js'
 import * as bitget from '../src/capture/capture-bitget.js'
 import * as bybit from '../src/capture/capture-bybit.js'
+import * as kucoin from '../src/capture/capture-kucoin.js'
 import * as okx from '../src/capture/capture-okx.js'
 
 const SETS = ['markets', 'public-ws', 'private-ws', 'orders'] as const
@@ -33,7 +36,7 @@ interface Driver {
   captureOrders(outDir?: string): Promise<void>
 }
 
-const DRIVERS: Record<string, Driver> = { binance, bybit, okx, bitget }
+const DRIVERS: Record<string, Driver> = { binance, bybit, okx, bitget, kucoin }
 const VENUES = Object.keys(DRIVERS)
 
 const USAGE = [

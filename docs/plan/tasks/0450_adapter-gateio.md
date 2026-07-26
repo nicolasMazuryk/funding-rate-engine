@@ -1,5 +1,9 @@
 # 0450 — Gate.io adapter
 
+> **SKIPPED — venue dropped, see STATUS 0450.** No `gateio` adapter exists or will exist;
+> `gateio` is absent from `EXCHANGE_IDS` and `config/exchanges.yaml`. The rest of this file
+> is kept verbatim as the record of what was planned.
+
 **Phase:** 6 — Remaining venues
 **Depends on:** 0260
 **Spec references:** `10_exchange_adapters_and_market_data.md` (all); `11_execution_and_account_state.md`; `17_testing.md` §3

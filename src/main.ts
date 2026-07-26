@@ -25,6 +25,8 @@ import { createBitgetAdapter } from './adapters/exchanges/bitget/adapter.js'
 import { createBitgetClients, createBitgetRateLimiter } from './adapters/exchanges/bitget/factory.js'
 import { createBybitAdapter } from './adapters/exchanges/bybit/adapter.js'
 import { createBybitClients, createBybitRateLimiter } from './adapters/exchanges/bybit/factory.js'
+import { createKucoinAdapter } from './adapters/exchanges/kucoin/adapter.js'
+import { createKucoinClients, createKucoinRateLimiter } from './adapters/exchanges/kucoin/factory.js'
 import { createOkxAdapter } from './adapters/exchanges/okx/adapter.js'
 import { createOkxClients, createOkxRateLimiter } from './adapters/exchanges/okx/factory.js'
 import type { ConsecutiveFailureCounter } from './adapters/shared/errors.js'
@@ -127,7 +129,23 @@ function buildAdapter(
         log,
       })
     }
-    default: {
+    case 'kucoin': {
+      // Third passphrase venue. `createKucoinClients` takes no environment argument at all:
+      // KuCoin has no futures sandbox and `setSandboxMode` fails *silently* into
+      // `urls.api = {}`, so there is deliberately nothing to select (`kucoin/factory.ts`).
+      const clients = createKucoinClients(cfg.exchangeProfile, cfg.secrets)
+      return createKucoinAdapter({
+        client: clients.ccxt,
+        clock,
+        limiter: createKucoinRateLimiter(cfg.exchangeProfile, clock),
+        accountSetup: clients.native,
+        deny: cfg.symbols.deny,
+        submissionStaggerMs: cfg.exchangeProfile.submissionStaggerMs,
+        failures,
+        log,
+      })
+    }
+    case 'binance': {
       const clients = createBinanceClients(cfg.exchangeProfile, cfg.secrets)
       return createBinanceAdapter({
         client: clients.ccxt,
@@ -137,6 +155,15 @@ function buildAdapter(
         failures,
         log,
       })
+    }
+    default: {
+      // Exhaustiveness guard, and it is load-bearing rather than ceremonial: this switch used to
+      // fall through to Binance, so adding a venue to `EXCHANGES` (`config/env.ts`) without a
+      // `case` here would have booted a **Binance** adapter holding that venue's credentials —
+      // no type error, no runtime error, just wrong orders on the wrong exchange. With every id
+      // cased, `cfg.exchange` is `never` here and a future omission is a compile error.
+      const unreachable: never = cfg.exchange
+      throw new Error(`main: no adapter wired for exchange '${String(unreachable)}'`)
     }
   }
 }

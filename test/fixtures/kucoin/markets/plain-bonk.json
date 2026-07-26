@@ -1,0 +1,51 @@
+{
+  "active": true,
+  "base": "BONK",
+  "baseId": "BONK",
+  "contract": true,
+  "contractSize": 10000,
+  "future": false,
+  "id": "BONKUSDTM",
+  "info": {
+    "baseCurrency": "BONK",
+    "fundingRateGranularity": 14400000,
+    "lotSize": 1,
+    "multiplier": 10000,
+    "quoteCurrency": "USDT",
+    "settleCurrency": "USDT",
+    "status": "Open",
+    "symbol": "BONKUSDTM",
+    "type": "FFWCSX"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "max": 1000000,
+      "min": 1
+    },
+    "cost": {},
+    "leverage": {
+      "max": 20,
+      "min": 1
+    },
+    "price": {
+      "max": 1000000,
+      "min": 1e-8
+    }
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 1e-8
+  },
+  "quote": "USDT",
+  "quoteId": "USDT",
+  "settle": "USDT",
+  "settleId": "USDT",
+  "spot": false,
+  "subType": "linear",
+  "swap": true,
+  "symbol": "BONK/USDT:USDT",
+  "type": "swap"
+}

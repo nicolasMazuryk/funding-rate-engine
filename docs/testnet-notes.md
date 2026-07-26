@@ -203,3 +203,66 @@ whole suite skips and exits 0.
 - **Real 429 induction is unsafe** (demo rides the production limiter), so `error-taxonomy`
   asserts the table across all three arrival shapes plus a live typed `NotFound`
   (cancel of a never-placed `clientOid` → `25204`) and documents the rate-limit half as a skip.
+
+## KuCoin (futures — **no testnet exists**)
+
+The one venue with no non-production environment at all, which is why its tier
+(`npm run test:testnet -- --venue kucoin`, task 0460) is **read-only against the live host**
+rather than a testnet run at all. What that costs, and the traps found on the way:
+
+- **The sandbox is gone, and the SDK lets you believe it isn't.** `ccxt.kucoinfutures` carries
+  no `urls.test`, and `setSandboxMode(true)` does **not** throw — it silently sets
+  `urls.api = {}`, so the failure surfaces much later as an unrelated URL error. So
+  `kucoin/factory.ts` exposes **no** `network` option at all: not a no-op branch, not an option
+  that logs — nothing to select. `factory.test.ts` is the regression guard.
+- **The tier is read-only by construction, not by convention.** Six checks (`markets`,
+  `rateLimiter`, `deltas`, `streams`, `errorTaxonomy`, `assertFlat`); no `orderPath` and no
+  `accountSetup`, and no stub files returning `skip` — an absent slot is clearer than a lying
+  one. Three checks are rewrites, not copies: `assert-flat` **asserts** and throws for the
+  operator instead of flattening (Bitget's version places a reduce-only market order, which
+  here would be real money); `error-taxonomy`'s live probe is a `getOrder` **read** rather than
+  Bitget's `cancelOrder` write; `rate-limiter`'s arithmetic is against weights, not req/s.
+  `git grep 'placeOrder\|cancelOrder\|submitFutures' src/testnet/kucoin/` returning nothing is
+  part of the definition of done.
+- **The summary type had to widen.** It hard-coded `network: 'testnet'`, so a KuCoin run would
+  have claimed a testnet execution while hitting live production with live keys. It is now
+  `'testnet' | 'live-readonly'`.
+- **The env naming deliberately breaks the convention.** The other four venues read
+  `<VENUE>_TESTNET_API_KEY`/`_SECRET`; there is no KuCoin testnet, so that prefix would be a lie
+  in a `.env`. The tier reads `KUCOIN_API_KEY` / `_API_SECRET` / `_API_PASSPHRASE` plus an
+  explicit `KUCOIN_LIVE_READONLY=1` opt-in, because these are live-money credentials.
+- **`private-ws` and `orders` fixtures are hand-authored.** Every sibling driver records them by
+  placing one far-from-market limit on a demo account and cancelling it; with no demo account
+  that same code is a real order. `capture-kucoin.ts`'s two private set functions therefore
+  **throw** with a pointer to the manifests rather than silently no-op.
+- **The order path has never been exercised against the venue** — not on a sandbox, not live.
+  `ws-orders.ts` and `account-setup.ts` are typechecked against the SDK and unit-tested against
+  fixtures, and that is all. Tasks 0470/0480 must not assume otherwise.
+- **Ran credentialed: 6/6 against the live host.** What that proves: the universe loads and
+  filters (657 linear USDT swaps; `XBTUSDTM` contract size 0.001 BTC; funding cadences 1 h/4 h/8 h
+  all present); the weight-budget arithmetic holds; `fundingIncome` reads over a historical window;
+  **both** public topics deliver a `FundingPredicted` and a `MarketTick`; the **private** WS
+  completes its bullet-private handshake, authenticates and subscribes all three account topics
+  before the REST reprime reads; the error taxonomy resolves live; and the account is asserted
+  flat. No order was placed and nothing was cancelled.
+- **`error-taxonomy` earned its keep on the first credentialed run — it caught a real
+  mis-mapping.** KuCoin has **no dedicated order-not-found code**: reading an order the account
+  never placed (by `clientOid` *or* by `orderId`) answers HTTP **200** with
+  `{ code: '100001', msg: 'error.getOrder.orderNotExist' }`, and `100001` is the venue's generic
+  "there are invalid parameters", which the map had tabled — correctly, for its other uses — as
+  `OrderRejected`. Two consequences, both now encoded:
+  - the discriminator is the **message key**, so `error-map.ts` consults `/orderNotExist/i` ahead
+    of the code table, for that one key only. Tabling `100001` as `NotFound` instead would have
+    been worse than the bug it fixed: `11` §6 treats a not-found cancel as "already gone,
+    reconcile to truth", so every genuine parameter rejection would then be silently swallowed. A
+    live `100003` off the venue's dry-run order endpoint confirmed the code really is reused.
+  - **the HTTP status is not a signal of failure on this venue.** KuCoin nests the venue code at
+    `body.code` with the HTTP status on top, exactly like Bitget — but it answers **200** for
+    business rejections, so `body.code`-first ordering is not an optimisation here, it is the only
+    thing that classifies these at all.
+- **`limits.cost.min` is empty**, as on OKX: KuCoin publishes no per-instrument minimum notional
+  through ccxt, so `minNotional` is 0 and the min-order gate rests on `minQty` (1 contract) alone.
+- **The keys were IP-allowlisted mid-task**, which yielded the one observation the read-only tier
+  cannot produce: an unallowlisted request answers HTTP 403 + `body.code '400006'`, and
+  `EXCHANGE=kucoin npm start` surfaced it as a typed `AuthError` — proving the composition root
+  reaches KuCoin rather than falling through to Binance.

@@ -1,0 +1,18 @@
+{
+  "capturedAtMs": 1785081600123,
+  "count": 7,
+  "network": "prod",
+  "set": "private-ws",
+  "source": "HAND-AUTHORED, never captured. KuCoin decommissioned its futures sandbox (ccxt.kucoinfutures has no urls.test), so the sibling venues' capture recipe — place one far-from-market limit on a demo account and cancel it — would place a REAL order with REAL money on a LIVE account. src/capture/capture-kucoin.ts#capturePrivateWs therefore throws instead of capturing. These frames are written by hand from the venue's documented payload shapes for /contractMarket/tradeOrders (subject symbolOrderChange), /contract/positionAll (subjects position.change and position.settlement) and /contractAccount/wallet (subject walletBalance.change), with values consistent across the file for XBTUSDTM (contract size 0.001 BTC, integer contract counts, price ~64700): a 5-contract buy that opens, partially matches, fills, a cancelled exit, the resulting position, one funding settlement (fundingFee -0.1213 USDT = 5 x 0.001 BTC x 64707.98 x 0.000375, charged to a long at a positive rate) and the wallet change that follows it. Edit them here (and this synthetic list) rather than re-capturing.",
+  "synthetic": [
+    "frames.jsonl#1 tradeOrders symbolOrderChange type=open status=open (resting limit)",
+    "frames.jsonl#2 tradeOrders symbolOrderChange type=match status=match (partial, filledSize 2/5)",
+    "frames.jsonl#3 tradeOrders symbolOrderChange type=filled status=done (filledSize 5/5)",
+    "frames.jsonl#4 tradeOrders symbolOrderChange type=canceled status=done (exit leg pulled)",
+    "frames.jsonl#5 positionAll position.change changeReason=positionChange (currentQty +5)",
+    "frames.jsonl#6 positionAll position.settlement (explicit fundingFee, ts in nanoseconds)",
+    "frames.jsonl#7 wallet walletBalance.change (availableBalance / holdBalance split)"
+  ],
+  "toolVersion": "1",
+  "venue": "kucoin"
+}

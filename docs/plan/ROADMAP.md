@@ -16,7 +16,7 @@
 | **3 — Binance adapter (deep)** | First real venue, built as the reference pattern: clients, markets, errors, rate limiter, public/private WS, order manager, trackers, fixtures, testnet tier | 0190–0260 | Binance adapter passes integration + testnet suites. |
 | **4 — Strategies** | S1 → S1-WS → S2 → S3a → S4.1a → S4.2a → S6, each with its exit-policy kind, sim scenarios, e2e coverage | 0270–0350 | All 7 strategies verified against the sim harness end-to-end. |
 | **5 — Sidecars full** | Full Postgres schema, complete crash recovery, circuit breakers/flatten/orphans, accounting, reconciliation, analytics | 0360–0410 | Specs 13/14/15 fully implemented. |
-| **6 — Remaining venues** | Bybit, OKX, Bitget, Gate.io, KuCoin — one pattern-following task per venue | 0420–0460 | All six adapters behind the one interface; testnet tiers where available. |
+| **6 — Remaining venues** | Bybit, OKX, Bitget, KuCoin — one pattern-following task per venue (Gate.io / 0450 skipped by decision) | 0420–0460 | All five adapters behind the one interface; testnet tiers where available. |
 | **7 — Live tier** | Capped real-money harness, live verification runs, S6 shadow → canary | 0470–0500 | Layered verification complete through real production runs (spec 0000 "stakes"). |
 | **8 — Fleet** | Docker image, 30-instance compose fleet, config generation, deferred CI task | 0510–0530 | Deployable 5×6 fleet; CI mirrors local verify. |
 
@@ -31,7 +31,7 @@
 3. **After 0260:** the Binance adapter is proven against recorded fixtures and live testnet.
 4. **After 0350:** all seven strategies pass unit + sim-scenario + e2e suites.
 5. **After 0410:** every trade produces a reconciled, decomposed P&L record; crash recovery covers every WAL state.
-6. **After 0460:** six venues behind one interface.
+6. **After 0460:** five venues behind one interface (Gate.io dropped — see STATUS 0450).
 7. **After 0500:** live capped-money verification done; S6 shadow/canary metrics collected and machine-checked.
 8. **After 0520:** the 30-instance fleet is deployable from one image.
 
@@ -58,7 +58,7 @@ Open questions found in the specs, each resolved with a recorded assumption (do 
 | A2 | Linter/formatter not named by specs (only "formatter/linter/typechecker"). | **Superseded 2026-07-18 (user decision, task 0010 revision):** Biome (`biome check`) — one tool for lint + format — replaces the earlier ESLint (typescript-eslint, strict) + Prettier lock. The purity-boundary import-restriction mechanism is decided and lands in **task 0030** (no longer tied to `eslint-plugin`). Task 0010/0030. |
 | A3 | Risk defaults differ: `09` §3 example shows `max_concurrent_intents: 1`, `max_notional_usd: 20`; `13` §1 table says 10 / 100. | `13` §1 is the schema-default registry; `09` §3 is an example instance file with tighter values. Schema defaults from 13; per-instance YAML may tighten. Task 0140. |
 | A4 | Scenario file format: spec 0000 §5 says "YAML or TS". | TypeScript scenario files (typed, refactor-safe, no extra parser). Task 0160. |
-| A5 | Native npm lib names (`gateio-api`, `kucoin-api`, …) may not exist under exactly those names. | Use the canonical list from `08` §6 where published; if an exact name is unavailable, substitute the maintained equivalent for that venue and record the substitution in STATUS.md notes. Tasks 0190, 0420–0460. |
+| A5 | Native npm lib names (`kucoin-api`, …) may not exist under exactly those names. | Use the canonical list from `08` §6 where published; if an exact name is unavailable, substitute the maintained equivalent for that venue and record the substitution in STATUS.md notes. Tasks 0190, 0420–0460. |
 | A6 | Proposed vs schema-default parameter values differ (e.g. S1 `amountUsd` proposed 10, schema default 20). | Canonical schema ships **schema defaults** (per `00` §8.2); committed example configs ship **proposed values** (per strategy file §5 tables). Task 0100. |
 | A7 | Spec 08 §7 layout shows `persistence/` outside `src/` indentation ambiguity. | All source under `src/` (`src/persistence/`, `src/execution/`, etc.) — consistent with the tree's intent. Task 0010. |
 | A8 | "Basic CI" required by 0000 in Phase 0. | Deferred (decision 4). Recorded here and in `docs/plan/COVERAGE.md`. |

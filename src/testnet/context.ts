@@ -5,7 +5,8 @@
  * integration smokes) and exposes the narrow surface checks need. `onCleanup` here is
  * a no-op placeholder — `runner.ts` overrides it per-check.
  *
- * One builder per venue (Binance task 0260, Bybit task 0420, OKX task 0430, Bitget task 0440).
+ * One builder per venue (Binance task 0260, Bybit task 0420, OKX task 0430, Bitget task 0440,
+ * KuCoin task 0460 — the last of which is **live read-only**, not a testnet, see its section).
  * They share the {@link CheckContext} shape and nothing else — the clients they expose are the
  * venue's own concrete types, since the checks that need raw client access (`assert-flat`,
  * `error-taxonomy`) are venue-specific by construction. No premature abstraction: a
@@ -14,6 +15,7 @@
 
 import { readFileSync } from 'node:fs'
 import { WS_KEY_MAP } from 'bitget-api'
+import { WS_KEY_MAP as KUCOIN_WS_KEY_MAP } from 'kucoin-api'
 import { createRealClock } from '../adapters/clock/real-clock.js'
 import { createBinanceAdapter } from '../adapters/exchanges/binance/adapter.js'
 import { type BinanceClients, createBinanceClients } from '../adapters/exchanges/binance/factory.js'
@@ -25,6 +27,12 @@ import {
 } from '../adapters/exchanges/bitget/factory.js'
 import { createBybitAdapter } from '../adapters/exchanges/bybit/adapter.js'
 import { type BybitClients, createBybitClients, createBybitRateLimiter } from '../adapters/exchanges/bybit/factory.js'
+import { createKucoinAdapter } from '../adapters/exchanges/kucoin/adapter.js'
+import {
+  createKucoinClients,
+  createKucoinRateLimiter,
+  type KucoinClients,
+} from '../adapters/exchanges/kucoin/factory.js'
 import { createOkxAdapter } from '../adapters/exchanges/okx/adapter.js'
 import { createOkxClients, createOkxRateLimiter, type OkxClients } from '../adapters/exchanges/okx/factory.js'
 import { type ExchangeProfile, parseExchangeProfiles } from '../config/exchange-schema.js'
@@ -360,5 +368,103 @@ export async function createBitgetTestnetContext(): Promise<BitgetTestnetContext
       const balance = await adapter.getBalance()
       return balance.free
     },
+  }
+}
+
+// ── KuCoin (task 0460, LIVE read-only — there is no testnet) ─────────────────
+
+/**
+ * KuCoin signs with three credentials, as OKX and Bitget do — but the env names deliberately
+ * **break** the other four venues' `<VENUE>_TESTNET_*` convention.
+ *
+ * There is no KuCoin futures testnet: the sandbox was decommissioned, ccxt carries no
+ * `urls.test` for `kucoinfutures`, and `setSandboxMode(true)` silently empties `urls.api`
+ * (`kucoin/factory.ts`). A `KUCOIN_TESTNET_API_KEY` line in a `.env` would therefore be a lie
+ * about what the key is: it is a **live production key on an account with real money**. So the
+ * names are the plain `KUCOIN_API_KEY` / `_API_SECRET` / `_API_PASSPHRASE` the engine itself
+ * reads (`09` §2), and the fourth term — `KUCOIN_LIVE_READONLY=1` — is an explicit opt-in that
+ * exists precisely *because* they are live keys: merely having KuCoin credentials in the
+ * environment (for `npm start`) must not silently arm this suite against the live account.
+ */
+export function hasKucoinCredentials(): boolean {
+  return (
+    !!process.env.KUCOIN_API_KEY &&
+    !!process.env.KUCOIN_API_SECRET &&
+    !!process.env.KUCOIN_API_PASSPHRASE &&
+    process.env.KUCOIN_LIVE_READONLY === '1'
+  )
+}
+
+export interface KucoinLiveContext extends CheckContext {
+  readonly adapter: ExchangeAdapter
+  /**
+   * Raw ccxt/native clients — `assert-flat` needs the account-wide open-order read, a surface
+   * the `ExchangeAdapter` port deliberately doesn't expose generically. Note what the checks
+   * never reach for: nothing here is used to *write*.
+   */
+  readonly clients: KucoinClients
+  readonly clock: Clock
+  readonly bus: EventBus
+  readonly events: readonly EngineEvent[]
+  /**
+   * The **committed** `config/exchanges.yaml` KuCoin profile, as on the siblings — `deltas`/
+   * `rate-limiter` assert the shipped numbers, and the adapter under test is built from it.
+   */
+  readonly profile: ExchangeProfile
+  /**
+   * Marker, not a flag: this venue's tier runs against **live production** with live keys, so
+   * every check in `./kucoin/` is a read. Nothing branches on it — it is carried so a check (or
+   * a future reader) cannot mistake this context for a sandbox one.
+   */
+  readonly readOnly: true
+}
+
+/**
+ * Build the shared adapter/clients once; every check in the registry reuses this one context.
+ *
+ * Unlike the four siblings this takes **no `network` argument**, because `kucoin/factory.ts`
+ * deliberately exposes none (see `hasKucoinCredentials` above). The order path is also left
+ * unwired on purpose — no `wsApiPrivate`, no `restOrders`, no `accountSetup` — so a stray
+ * `placeOrder`/`cancelOrder`/`setLeverage` in a check fails loud ("order path requires …")
+ * instead of reaching a real account.
+ */
+export async function createKucoinTestnetContext(): Promise<KucoinLiveContext> {
+  const hasCredentials = hasKucoinCredentials()
+  const apiKey = process.env.KUCOIN_API_KEY ?? 'public'
+  const apiSecret = process.env.KUCOIN_API_SECRET ?? 'public'
+  // The factory fails loud on an absent passphrase, so the credential-free path supplies the
+  // same placeholder as the other two — every credentialed check then skips on `hasCredentials`.
+  const apiPassphrase = process.env.KUCOIN_API_PASSPHRASE ?? 'public'
+
+  const clock = createRealClock()
+  const bus = createEventBus()
+  const events: EngineEvent[] = []
+  bus.subscribe((e) => events.push(e))
+
+  const profile = parseExchangeProfiles(readFileSync(EXCHANGES_YAML, 'utf8')).kucoin
+  const clients = createKucoinClients(profile, { apiKey, apiSecret, apiPassphrase })
+  const adapter = createKucoinAdapter({
+    client: clients.ccxt,
+    clock,
+    limiter: createKucoinRateLimiter(profile, clock),
+    ws: clients.wsPublic,
+    wsPublicKey: KUCOIN_WS_KEY_MAP.futuresPublicV1,
+    wsPrivate: clients.wsPrivate,
+    wsPrivateKey: KUCOIN_WS_KEY_MAP.futuresPrivateV1,
+    bus,
+    submissionStaggerMs: profile.submissionStaggerMs,
+  })
+  await adapter.init()
+
+  return {
+    hasCredentials,
+    adapter,
+    clients,
+    clock,
+    bus,
+    events,
+    profile,
+    readOnly: true,
+    onCleanup: () => {},
   }
 }

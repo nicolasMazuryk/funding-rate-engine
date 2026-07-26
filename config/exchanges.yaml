@@ -129,26 +129,35 @@ bitget:
     rest_url: https://api.bitget.com
   deltas: {}
 
-gateio:
-  taker_fee_pct: 0.05
-  maker_fee_pct: 0.02
-  submission_stagger_ms: 100
-  rate_limit_reserve_pct: 10
-  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
-  ws_order_adapter: true
-  ws:
-    public_url: wss://fx-ws.gateio.ws/v4/ws/usdt
-    private_url: wss://fx-ws.gateio.ws/v4/ws/usdt
-  deltas: {}
-
 kucoin:
-  taker_fee_pct: 0.06
-  maker_fee_pct: 0.02
+  taker_fee_pct: 0.06 # live ccxt market.taker on XBTUSDTM (0.0006)
+  maker_fee_pct: 0.02 # live ccxt market.maker on XBTUSDTM (0.0002)
   submission_stagger_ms: 100
-  rate_limit_reserve_pct: 10
-  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
+  # KuCoin is the only venue here with a **real published weight model** (task 0460): a per-UID
+  # resource pool whose quota is deducted per endpoint and reset on a rolling 30 s window, with
+  # HTTP 429 + venue code `429000` on exhaustion. Bybit/OKX/Bitget publish request *counts*, so
+  # their adapters charge weight 1 per call; this one charges the venue's own weights (~6
+  # endpoints, `src/adapters/exchanges/kucoin/{adapter,ws-orders}.ts`).
+  #
+  # The futures pool is 2000 weight / 30 s at VIP0 = 4000/min. Budgeting the full pool would run
+  # the limiter at 100 % of the venue cap, so this is sized at 90 % (3600/min = 1800 per 30 s),
+  # leaving headroom for anything outside the limiter's accounting. The 33 % reserve then makes
+  # **both** lanes true:
+  #   - order lane 3600 × 0.33 = 1188 weight/min ÷ 2 (add-order weight) = 594 orders/min ≈ 9.9/s,
+  #     which is exactly what the 100 ms submission stagger asks for;
+  #   - general lane 3600 × 0.67 = 2412 weight/min = 1206 per 30 s, well inside the pool
+  #     alongside the order lane.
+  rate_limit_reserve_pct: 33
+  rate_limit_weight_per_minute: 3600
   ws_order_adapter: true
+  # KuCoin does **not** publish a fixed WS host: a connection starts with a bullet-token POST
+  # whose reply carries the real `instanceServers[].endpoint`, and the native SDK performs that
+  # handshake itself (keyed by wsKey, not by URL). These are therefore the *token* endpoints, and
+  # they are documentation rather than configuration — nothing in the adapter reads them.
   ws:
-    public_url: wss://ws-api-futures.kucoin.com/endpoint
-    private_url: wss://ws-api-futures.kucoin.com/endpoint
+    public_url: https://api-futures.kucoin.com/api/v1/bullet-public
+    private_url: https://api-futures.kucoin.com/api/v1/bullet-private
+  # No `testnet:` key, deliberately: KuCoin decommissioned its futures sandbox. ccxt carries no
+  # `urls.test` for `kucoinfutures` and `setSandboxMode(true)` silently sets `urls.api = {}`, so
+  # the venue's verification tier is read-only against the live host instead (`src/testnet/kucoin/`).
   deltas: {}
