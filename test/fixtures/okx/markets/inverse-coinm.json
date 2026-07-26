@@ -1,0 +1,37 @@
+{
+  "active": true,
+  "base": "BTC",
+  "contract": true,
+  "contractSize": 100,
+  "future": false,
+  "id": "BTC-USD-SWAP",
+  "info": {
+    "ctMult": "1",
+    "ctType": "inverse",
+    "ctVal": "100",
+    "ctValCcy": "USD",
+    "instId": "BTC-USD-SWAP",
+    "instType": "SWAP",
+    "settleCcy": "BTC",
+    "state": "live"
+  },
+  "inverse": true,
+  "limits": {
+    "amount": {
+      "min": 1
+    },
+    "cost": {}
+  },
+  "linear": false,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 0.1
+  },
+  "quote": "USD",
+  "settle": "BTC",
+  "spot": false,
+  "swap": true,
+  "symbol": "BTC/USD:BTC",
+  "type": "swap"
+}

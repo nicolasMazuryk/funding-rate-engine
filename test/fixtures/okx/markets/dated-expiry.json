@@ -1,0 +1,38 @@
+{
+  "active": true,
+  "base": "BTC",
+  "contract": true,
+  "contractSize": 0.01,
+  "expiry": 1774598400000,
+  "future": true,
+  "id": "BTC-USDT-260327",
+  "info": {
+    "ctMult": "1",
+    "ctType": "linear",
+    "ctVal": "0.01",
+    "expTime": "1774598400000",
+    "instId": "BTC-USDT-260327",
+    "instType": "FUTURES",
+    "settleCcy": "USDT",
+    "state": "live"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "min": 0.01
+    },
+    "cost": {}
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 0.01,
+    "price": 0.1
+  },
+  "quote": "USDT",
+  "settle": "USDT",
+  "spot": false,
+  "swap": false,
+  "symbol": "BTC/USDT:USDT-260327",
+  "type": "future"
+}

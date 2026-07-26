@@ -5,11 +5,11 @@
  * integration smokes) and exposes the narrow surface checks need. `onCleanup` here is
  * a no-op placeholder — `runner.ts` overrides it per-check.
  *
- * One builder per venue (Binance task 0260, Bybit task 0420). They share the
+ * One builder per venue (Binance task 0260, Bybit task 0420, OKX task 0430). They share the
  * {@link CheckContext} shape and nothing else — the clients they expose are the venue's
  * own concrete types, since the checks that need raw client access (`assert-flat`,
  * `error-taxonomy`) are venue-specific by construction. No premature abstraction: a
- * common "venue context" interface would only be the union of two client sets.
+ * common "venue context" interface would only be the union of three client sets.
  */
 
 import { readFileSync } from 'node:fs'
@@ -18,6 +18,8 @@ import { createBinanceAdapter } from '../adapters/exchanges/binance/adapter.js'
 import { type BinanceClients, createBinanceClients } from '../adapters/exchanges/binance/factory.js'
 import { createBybitAdapter } from '../adapters/exchanges/bybit/adapter.js'
 import { type BybitClients, createBybitClients, createBybitRateLimiter } from '../adapters/exchanges/bybit/factory.js'
+import { createOkxAdapter } from '../adapters/exchanges/okx/adapter.js'
+import { createOkxClients, createOkxRateLimiter, type OkxClients } from '../adapters/exchanges/okx/factory.js'
 import { type ExchangeProfile, parseExchangeProfiles } from '../config/exchange-schema.js'
 import { createEventBus } from '../core/events/bus.js'
 import type { EngineEvent } from '../core/events/types.js'
@@ -147,6 +149,93 @@ export async function createBybitTestnetContext(): Promise<BybitTestnetContext> 
     client: clients.ccxt,
     clock,
     limiter: createBybitRateLimiter(profile, clock),
+    accountSetup: clients.native,
+    ws: clients.wsPublic,
+    wsPrivate: clients.wsPrivate,
+    wsApiPrivate: clients.wsApiPrivate,
+    restOrders: clients.native,
+    bus,
+    submissionStaggerMs: profile.submissionStaggerMs,
+    wsOrderRestFallback: profile.deltas.wsOrderRestFallback ?? false,
+  })
+  await adapter.init()
+
+  return {
+    hasCredentials,
+    adapter,
+    clients,
+    clock,
+    bus,
+    events,
+    profile,
+    onCleanup: () => {},
+    async getBalanceFree(): Promise<number> {
+      const balance = await adapter.getBalance()
+      return balance.free
+    },
+  }
+}
+
+// ── OKX (task 0430, demo trading) ────────────────────────────────────────────
+
+/**
+ * OKX signs with **three** credentials, so the probe is a three-way `and`: a key/secret pair
+ * without the passphrase cannot sign a single private call (`50104`), and the factory refuses
+ * to build clients from it. `OKX_TESTNET_PASSPHRASE` (not `_API_PASSPHRASE`) matches the
+ * `<VENUE>_TESTNET_*` naming the two prior venues established.
+ */
+export function hasOkxTestnetCredentials(): boolean {
+  return (
+    !!process.env.OKX_TESTNET_API_KEY && !!process.env.OKX_TESTNET_API_SECRET && !!process.env.OKX_TESTNET_PASSPHRASE
+  )
+}
+
+export interface OkxTestnetContext extends CheckContext {
+  readonly adapter: ExchangeAdapter
+  /**
+   * Raw ccxt/native clients — `assert-flat` needs the raw open-order rows (`instId`/`clOrdId`)
+   * and `account-setup`/`error-taxonomy` the native `RestClient`, surfaces the
+   * `ExchangeAdapter` port deliberately doesn't expose generically.
+   */
+  readonly clients: OkxClients
+  readonly clock: Clock
+  readonly bus: EventBus
+  readonly events: readonly EngineEvent[]
+  /**
+   * The **committed** `config/exchanges.yaml` OKX profile, as on Bybit — `deltas`/`rate-limiter`
+   * assert the shipped numbers, and the adapter under test is built from the same object.
+   */
+  readonly profile: ExchangeProfile
+  /** Free quote-asset balance — the fund-dependent checks' self-gate. */
+  getBalanceFree(): Promise<number>
+}
+
+/**
+ * Build the shared adapter/clients once; every check in the registry reuses this one context.
+ *
+ * OKX demo trading is a **flag**, not a network: `network: 'testnet'` sets `demoTrading: true`
+ * on the native clients and ccxt's sandbox header on the same account's keys, so there is no
+ * separate REST host to merge in (only the WS host differs, and the SDK owns that).
+ */
+export async function createOkxTestnetContext(): Promise<OkxTestnetContext> {
+  const hasCredentials = hasOkxTestnetCredentials()
+  const apiKey = process.env.OKX_TESTNET_API_KEY ?? 'public'
+  const apiSecret = process.env.OKX_TESTNET_API_SECRET ?? 'public'
+  // The factory fails loud on an absent passphrase, so the credential-free path supplies the
+  // same placeholder as the other two credentials — every check then skips on `hasCredentials`.
+  const apiPassphrase = process.env.OKX_TESTNET_PASSPHRASE ?? 'public'
+
+  const clock = createRealClock()
+  const bus = createEventBus()
+  const events: EngineEvent[] = []
+  bus.subscribe((e) => events.push(e))
+
+  const profile = parseExchangeProfiles(readFileSync(EXCHANGES_YAML, 'utf8')).okx
+  const clients = createOkxClients(profile, { apiKey, apiSecret, apiPassphrase }, { network: 'testnet' })
+  const adapter = createOkxAdapter({
+    client: clients.ccxt,
+    clock,
+    limiter: createOkxRateLimiter(profile, clock),
     accountSetup: clients.native,
     ws: clients.wsPublic,
     wsPrivate: clients.wsPrivate,

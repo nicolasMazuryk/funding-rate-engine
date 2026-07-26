@@ -1,0 +1,21 @@
+{
+  "capturedAtMs": 1785060800661,
+  "count": 5,
+  "network": "prod",
+  "set": "markets",
+  "source": "ccxt.okx#loadMarkets (public /api/v5/public/instruments) + #fetchFundingRates (public /api/v5/public/funding-rate)",
+  "synthetic": [
+    "spot-btc",
+    "inverse-coinm",
+    "dated-expiry",
+    "delisted",
+    "anomaly-missing-precision",
+    "anomaly-zero-contractsize",
+    "anomaly-unparsable-base",
+    "anomaly-ctval-mismatch",
+    "multiplier-cat",
+    "plain-cat"
+  ],
+  "toolVersion": "1",
+  "venue": "okx"
+}

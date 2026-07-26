@@ -73,3 +73,63 @@ with what actually fired.
   documents the rate-limit half as a skip.
 - **`order-path` skips on an unfunded account** (`free < min USDT`), since a far-from-market
   limit order still needs margin.
+
+## OKX (demo trading)
+
+`npm run test:testnet -- --venue okx` (task 0430). Credentials: `OKX_TESTNET_API_KEY` /
+`_API_SECRET` / **`OKX_TESTNET_PASSPHRASE`** — all three, because OKX signs with a passphrase.
+Absent any of them the whole suite skips and exits 0, exactly like the other two venues.
+
+**RUN LIVE against a real demo account: 8/8 passed, 0 failed, 0 skipped, flat at exit.**
+What follows is what actually fired, not a designed path.
+
+- **There is no OKX testnet.** Demo trading is a *flag* on the production account
+  (`demoTrading: true` natively, `setSandboxMode(true)` in ccxt) — same keys, same REST host,
+  only the WS host differs (`wspap` vs `ws`). The `testnet:` block in `config/exchanges.yaml`
+  records that rather than a separate domain.
+- **The demo account initially sat on account level `1` (spot mode), which cannot be upgraded
+  via the API.** Isolated-margin *swap* orders need level `2` (spot-and-futures); level `1`
+  rejects every derivative order with `51010 "You can't complete this request under your
+  current account mode"`, and both `POST /api/v5/account/set-account-level` and the
+  `/account-level-switch-preset` variant answer `51070 "You do not meet the requirements for
+  switching to this account mode. Please upgrade your account mode on the OKX website or
+  app."` — `account-setup` and `order-path` skipped with the level named on that first run.
+  Flipping the demo account to *Spot and futures* mode in the OKX UI (a manual, human-only
+  step — confirmed unfixable from the API) turned both green on the next run: `account-setup`
+  applied one-way/isolated/5x leverage and read `acctLv: '2'`, `posMode: 'net_mode'` back;
+  `order-path` placed a real `0.01`-contract (`ctVal 0.01` BTC-USDT-SWAP, ~$626 notional) limit
+  order, observed `OPEN`, resubmitted the same `clientOrderId` idempotently, cancelled,
+  observed `CANCELLED`, and got a typed `OrderRejected` on a sub-minimum order. This is an
+  account property, not an adapter bug — the same code path is exercised offline by
+  `test/unit/adapters/exchanges/okx/{account-setup,ws-orders}.test.ts`.
+- **The WS trade API now requires the numeric `instIdCode`.** OKX deprecated the string
+  `instId` there in March 2026; a submit carrying only `instId` comes back
+  `50014 "Parameter instIdCode can not be empty"`. The adapter indexes `instId → instIdCode`
+  off the same `loadMarkets()` call (`adapter.ts`) and the transport sends both. REST still
+  takes `instId` alone, so the REST fallback was unaffected.
+- **The SDK's WS-API client logs in twice and OKX kills the socket for it.** `okx-api@3.2.1`
+  sends a login from its on-connect hook *and* from `sendWSAPIRequest`'s
+  `assertIsAuthenticated`; the second one gets
+  `60031 "The WebSocket endpoint does not allow multiple or repeated logins"`, the venue closes
+  the connection, and the client enters a reconnect loop in which **every order times out**
+  (`WsTimeout`, then the venue never sees it). Fixed by constructing that client with
+  `authPrivateConnectionsOnConnect: false` (`factory.ts`) — it subscribes to no topics, so the
+  single login `sendWSAPIRequest` awaits is the correct one. The private *stream* client keeps
+  the default (it needs auth before its topic subscriptions) and authenticated cleanly.
+- **`type` is ccxt's reserved market-type key.** Passing OKX's bill type as
+  `fetchLedger(…, { type: '8' })` reaches the venue as `instType=8` →
+  `51000 "Parameter instType error"`. `fundingIncome` therefore filters bill type on the rows,
+  not in the request. Read over a historical 24 h window (as on Bybit), never waiting for an
+  in-window settlement; an empty result is not a failure.
+- **Funding-fee delivery on the private WS is still the one genuine unknown.** OKX has no
+  funding channel: the adapter maps `balance_and_position` + `eventType: 'funding_fee'` and
+  infers the amount from the `cashBal` delta. The demo account held no position across a
+  settlement during the run, so nothing fired; the REST bills read (`fundingIncome`) is the
+  documented fallback and is the money truth on this venue.
+- **Both public channels fire.** Unlike Bybit's single fused `tickers` topic, `funding-rate`
+  and `tickers` are independent per-symbol subscriptions, and `streams` observed a
+  `FundingPredicted` **and** a `MarketTick` for BTC within a few seconds.
+- **Real 429 induction is unsafe** — same reasoning as the other two venues, and more so here:
+  demo trading rides the production rate limiter. `error-taxonomy` asserts the code table
+  across all three arrival shapes plus a live typed `NotFound` (cancel of a never-placed
+  `clOrdId` → `51400`), and documents the rate-limit half as a skip.

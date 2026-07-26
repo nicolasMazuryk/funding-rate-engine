@@ -4,32 +4,38 @@
  * machine-readable pass/fail/skip output. Thin CLI over `src/testnet/`, mirroring
  * `scripts/capture.ts`'s idiom; no test code imported (CLI must not depend on `test/`).
  *
- *   npm run test:testnet -- --venue <binance|bybit> [--out PATH] [--json]
+ *   npm run test:testnet -- --venue <binance|bybit|okx> [--out PATH] [--json]
  *
  * Without testnet credentials, every check reports `skip: no credentials` and the
  * command exits 0 — a missing key is never a red build. With credentials, the exit
  * code is `exitCodeFor(summary)`: 1 iff any check failed (skips never fail the run).
+ * OKX has no testnet domain — `--venue okx` runs against **demo trading**, a flag on the
+ * production host (`OKX_TESTNET_*`, passphrase included).
  *
- * Adding a venue (0420 Bybit; 0430–0460 next) is one {@link VENUE_REGISTRY} entry — its
+ * Adding a venue (0420 Bybit, 0430 OKX; 0440–0460 next) is one {@link VENUE_REGISTRY} entry — its
  * `17` §3 check registry, its context builder and its credential probe. The CLI stays
  * venue-agnostic.
  */
 
+import dotenv from 'dotenv'
 import type { ExchangeAdapter } from '../src/core/ports/exchange-adapter.js'
 import { binanceTestnetChecks } from '../src/testnet/binance/registry.js'
 import { bybitTestnetChecks } from '../src/testnet/bybit/registry.js'
 import {
   createBinanceTestnetContext,
   createBybitTestnetContext,
+  createOkxTestnetContext,
   hasBinanceTestnetCredentials,
   hasBybitTestnetCredentials,
+  hasOkxTestnetCredentials,
   TESTNET_TOOL_VERSION,
 } from '../src/testnet/context.js'
+import { okxTestnetChecks } from '../src/testnet/okx/registry.js'
 import { runChecks } from '../src/testnet/runner.js'
 import { exitCodeFor, formatSummaryTable, writeSummary } from '../src/testnet/summary.js'
 import type { Check, CheckContext, TestnetSummary } from '../src/testnet/types.js'
 
-const VENUES = ['binance', 'bybit'] as const
+const VENUES = ['binance', 'bybit', 'okx'] as const
 type Venue = (typeof VENUES)[number]
 
 const USAGE = ['Usage:', `  npm run test:testnet -- --venue <${VENUES.join('|')}> [--out PATH] [--json]`].join('\n')
@@ -75,6 +81,13 @@ const VENUE_REGISTRY: Record<Venue, VenueEntry> = {
     checks: bybitTestnetChecks,
     createContext: createBybitTestnetContext,
     hasCredentials: hasBybitTestnetCredentials,
+  }),
+  // OKX has no separate testnet: `--venue okx` runs against **demo trading**, a flag on the
+  // same account's keys (plus the passphrase the credential probe also requires).
+  okx: venueEntry({
+    checks: okxTestnetChecks,
+    createContext: createOkxTestnetContext,
+    hasCredentials: hasOkxTestnetCredentials,
   }),
 }
 
@@ -147,6 +160,9 @@ function skippedSummary(venue: Venue, checkNames: readonly { name: string; specR
 
 async function main(): Promise<void> {
   const args = parseArgs(process.argv.slice(2))
+  // Credentials live in the workspace `.env` (gitignored), as `scripts/analytics.ts` reads
+  // `DATABASE_URL`; a real shell env var still wins, since dotenv never overwrites.
+  dotenv.config({ quiet: true })
   if (args.venue === undefined) fail('--venue is required')
   const venue = args.venue
 

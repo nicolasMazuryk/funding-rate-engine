@@ -1,0 +1,36 @@
+{
+  "active": true,
+  "base": "DRIFT",
+  "contract": true,
+  "contractSize": 1,
+  "future": false,
+  "id": "DRIFT-USDT-SWAP",
+  "info": {
+    "ctMult": "1",
+    "ctType": "linear",
+    "ctVal": "10",
+    "instId": "DRIFT-USDT-SWAP",
+    "instType": "SWAP",
+    "settleCcy": "USDT",
+    "state": "live"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "min": 0.01
+    },
+    "cost": {}
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 0.01,
+    "price": 0.001
+  },
+  "quote": "USDT",
+  "settle": "USDT",
+  "spot": false,
+  "swap": true,
+  "symbol": "DRIFT/USDT:USDT",
+  "type": "swap"
+}

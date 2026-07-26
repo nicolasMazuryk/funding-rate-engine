@@ -1,0 +1,36 @@
+{
+  "active": true,
+  "base": "CAT",
+  "contract": true,
+  "contractSize": 1,
+  "future": false,
+  "id": "CAT-USDT-SWAP",
+  "info": {
+    "ctMult": "1",
+    "ctType": "linear",
+    "ctVal": "1",
+    "instId": "CAT-USDT-SWAP",
+    "instType": "SWAP",
+    "settleCcy": "USDT",
+    "state": "live"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "min": 1
+    },
+    "cost": {}
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 1e-8
+  },
+  "quote": "USDT",
+  "settle": "USDT",
+  "spot": false,
+  "swap": true,
+  "symbol": "CAT/USDT:USDT",
+  "type": "swap"
+}

@@ -1,0 +1,36 @@
+{
+  "active": true,
+  "base": "ZERO",
+  "contract": true,
+  "contractSize": 0,
+  "future": false,
+  "id": "ZERO-USDT-SWAP",
+  "info": {
+    "ctMult": "1",
+    "ctType": "linear",
+    "ctVal": "0",
+    "instId": "ZERO-USDT-SWAP",
+    "instType": "SWAP",
+    "settleCcy": "USDT",
+    "state": "live"
+  },
+  "inverse": false,
+  "limits": {
+    "amount": {
+      "min": 1
+    },
+    "cost": {}
+  },
+  "linear": true,
+  "option": false,
+  "precision": {
+    "amount": 1,
+    "price": 0.001
+  },
+  "quote": "USDT",
+  "settle": "USDT",
+  "spot": false,
+  "swap": true,
+  "symbol": "ZERO/USDT:USDT",
+  "type": "swap"
+}

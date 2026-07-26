@@ -23,6 +23,8 @@ import { createBinanceAdapter } from './adapters/exchanges/binance/adapter.js'
 import { createBinanceClients, createBinanceRateLimiter } from './adapters/exchanges/binance/factory.js'
 import { createBybitAdapter } from './adapters/exchanges/bybit/adapter.js'
 import { createBybitClients, createBybitRateLimiter } from './adapters/exchanges/bybit/factory.js'
+import { createOkxAdapter } from './adapters/exchanges/okx/adapter.js'
+import { createOkxClients, createOkxRateLimiter } from './adapters/exchanges/okx/factory.js'
 import type { ConsecutiveFailureCounter } from './adapters/shared/errors.js'
 import { createSimExchange } from './adapters/sim/sim-exchange.js'
 import {
@@ -84,6 +86,22 @@ function buildAdapter(
         client: clients.ccxt,
         clock,
         limiter: createBybitRateLimiter(cfg.exchangeProfile, clock),
+        accountSetup: clients.native,
+        deny: cfg.symbols.deny,
+        submissionStaggerMs: cfg.exchangeProfile.submissionStaggerMs,
+        failures,
+        log,
+      })
+    }
+    case 'okx': {
+      // OKX is the first venue whose clients need a third credential; `createOkxClients`
+      // fails loud when `OKX_API_PASSPHRASE` is absent rather than signing requests that
+      // would 50104 on the first private call.
+      const clients = createOkxClients(cfg.exchangeProfile, cfg.secrets)
+      return createOkxAdapter({
+        client: clients.ccxt,
+        clock,
+        limiter: createOkxRateLimiter(cfg.exchangeProfile, clock),
         accountSetup: clients.native,
         deny: cfg.symbols.deny,
         submissionStaggerMs: cfg.exchangeProfile.submissionStaggerMs,

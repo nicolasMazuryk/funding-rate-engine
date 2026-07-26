@@ -6,13 +6,13 @@
 # WS-capable), not "adapter implemented in this repo".
 #
 # WS URLs are best-effort real per-venue endpoints, inert until an adapter reads
-# them (0190 for Binance, 0420 for Bybit; 0430–0460 for the rest). Correctable when
-# each adapter is built and its venue team reviews.
+# them (0190 for Binance, 0420 for Bybit, 0430 for OKX; 0440–0460 for the rest).
+# Correctable when each adapter is built and its venue team reviews.
 #
 # rate_limit_weight_per_minute sizes the token bucket (task 0200). Binance 2400 is
-# the published fapi request-weight/min, Bybit 6000 is derived from its request-count
-# caps (see its block); the other four are 2400 placeholders, correctable per-venue at
-# 0430–0460.
+# the published fapi request-weight/min; Bybit 6000 and OKX 1200 are derived from
+# their request-count caps (see those blocks); the remaining three are 2400
+# placeholders, correctable per-venue at 0440–0460.
 
 binance:
   taker_fee_pct: 0.05
@@ -62,20 +62,39 @@ bybit:
   deltas: {}
 
 okx:
-  # Keeps the spec's worked §4 example, reshaped into this task's schema.
-  taker_fee_pct: 0.05
-  maker_fee_pct: 0.02
+  taker_fee_pct: 0.05 # live ccxt market.taker on BTC-USDT-SWAP (0.0005)
+  maker_fee_pct: 0.02 # live ccxt market.maker on BTC-USDT-SWAP (0.0002)
   submission_stagger_ms: 100
-  rate_limit_reserve_pct: 10
-  rate_limit_weight_per_minute: 2400 # request-weight budget/min = limiter bucket size (task 0200)
+  # OKX publishes NO weight model either (task 0430): its caps are request counts, and unlike
+  # Bybit there is no IP-wide aggregate — each read endpoint carries its own 20 req/2 s per-IP
+  # cap (= 600/min), while orders are capped at 60 req/2 s per instrument ID (= 30/s) under a
+  # 1000 req/2 s per-sub-account order ceiling. The limiter is one bucket/min split by
+  # `rate_limit_reserve_pct`, so 1200/min at a 50% reserve makes **both** lanes true: the order
+  # lane 600/min = 10/s (well under 30/s, and 10/s matches the 100 ms submission stagger), the
+  # general lane 600/min = 20 req/2 s = exactly one read endpoint's published cap — the honest
+  # bound when every read could in the worst case hit the same endpoint. Every OKX call draws
+  # weight 1.
+  rate_limit_reserve_pct: 50
+  rate_limit_weight_per_minute: 1200
   ws_order_adapter: true
   ws:
     public_url: wss://ws.okx.com:8443/ws/v5/public
     private_url: wss://ws.okx.com:8443/ws/v5/private
-  deltas:
-    funding_fee_timeout_seconds: 45 # 00_globals §6
-    leverage: { s1: 4 } # 00_globals §6 (spec literal was leverage_strategy_1: 4)
-    ws_order_rest_fallback: true # this venue enables REST fallback on WS_TIMEOUT (§6)
+  # OKX demo trading is a **flag** on the same account/host family (`demoTrading: true` on the
+  # SDK clients, ccxt `setSandboxMode(true)`), not a separate testnet domain — only the WS host
+  # differs (`wspap` vs `ws`). Keys are issued per-account with a passphrase; there is no
+  # separate testnet signup.
+  testnet:
+    ws:
+      public_url: wss://wspap.okx.com:8443/ws/v5/public
+      private_url: wss://wspap.okx.com:8443/ws/v5/private
+    rest_url: https://www.okx.com
+  # No OKX-specific deltas: the venue runs the standard defaults, as every other venue does.
+  # The spec's §4 worked example (funding_fee_timeout_seconds / leverage / ws_order_rest_fallback)
+  # is an illustration of the delta *mechanism*, not a confirmed OKX fact — the mechanism is
+  # covered by `test/unit/config/delta-merge.test.ts` and the synthetic profile in
+  # `test/unit/config/exchange-schema.test.ts`.
+  deltas: {}
 
 bitget:
   taker_fee_pct: 0.06

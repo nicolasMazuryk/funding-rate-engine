@@ -12,8 +12,9 @@ shape is `docs/specs/10`–`11`.
   tested against; happy path + scriptable faults.
 - `clock/` — `real-clock` (wall time) and `virtual-clock` (manual, deterministic test time).
 - `exchanges/<venue>/` — real adapters. `binance/` is the first (0190), `bybit/` the second
-  (0420); both hold the same nine files with the same exported shapes, so the remaining four
-  (0430–0460) copy that shape verbatim.
+  (0420), `okx/` the third (0430); all hold the same nine files with the same exported shapes
+  (OKX adds a tenth, `client-order-id.ts`, for its alphanumeric-only `clOrdId`), so the
+  remaining three (0440–0460) copy that shape verbatim.
 
 ## Venue-quirk-as-data
 
@@ -28,29 +29,35 @@ One row per venue, one column per thing that actually differs. Add a row (not a 
 adapter; if a column cannot express a venue, that is the signal the port needs widening —
 raise it in STATUS rather than special-casing the core.
 
-| Quirk | Binance (USDⓈ-M) | Bybit (v5 linear) |
-|---|---|---|
-| Symbol multipliers | `1000`, `1000000` | `1000`, `10000`, `1000000` (false-positive traps in the live listing: `1INCH`, `2Z`, `0G` — a prefix only counts when a letter follows) |
-| Funding-interval source | ccxt `info.fundingIntervalHours`, plus a second REST read (`fapi/v1/fundingInfo`) for the non-8h symbols | `info.fundingInterval` **in minutes** (60/240/480; `0` marks the dated `LinearFutures` rows) → `/60`; one call, no second read |
-| Funding-fee delivery | WS `ACCOUNT_UPDATE` `updateEventType: 'FUNDING_FEE'`; amount inferred from the matching quote-asset balance change | WS `execution` frame with `execType: 'Funding'` (**unconfirmed for UTA** — see STATUS 0420); `execFee` is the charge, negated into the port's credit-positive convention |
-| `fundingIncome` (REST money truth) | `NotImplemented` stub (deferred past 0300) | real: ccxt `fetchLedger` → `/v5/account/transaction-log` `type=SETTLEMENT`, field `funding`, **positive = received** |
-| Margin-mode granularity | per symbol (`setMarginMode('isolated', symbol)`) | **account-wide** on the Unified Trading Account (`POST /v5/account/set-margin-mode` `ISOLATED_MARGIN`); the port's `symbol` is ignored and the call is applied once per process (0420 D1) |
-| Position mode | account-wide `hedged: false` | per symbol *or* per coin (`POST /v5/position/switch-mode` `mode=0`); scoped by `coin: 'USDT'` so one call covers the universe |
-| Leverage | per symbol, one value | per symbol, `buyLeverage === sellLeverage` required in one-way mode |
-| Order transport | WS-API `submitNewFuturesOrder`/`cancelFuturesOrder`; reject code nested at `err.error.code` | WS-API `submitNewOrder`/`cancelOrder` (`category: 'linear'`, `orderLinkId` = `clientOrderId`, `positionIdx: 0`); reject arrives as the **raw reply object** carrying `retCode` |
-| Order read by client id | ccxt `fetchOrder(id, symbol, { clientOrderId })` | ccxt `fetchOrder` hard-binds the venue `orderId`, so the client-id read goes through `fetchOpenOrders(symbol, …, { orderLinkId })` → `/v5/order/realtime` (open + recently closed = the fill-poll window) |
-| `'stop'` order type | native `STOP` | no native stop type: conditional `Market` order with `triggerPrice` + `triggerDirection` (1 rise / 2 fall) |
-| Rate-limit model | published request **weights** per endpoint (2400/min) | **no weights** — request counts: 600 req/5 s per IP, 10 orders/s per UID. Expressed as one number: `rate_limit_weight_per_minute: 6000` + 10 % order reserve = 600/min = 10/s (0420 D2); every call costs weight 1 |
-| Public funding stream | one all-symbol `!markPrice@arr@1s` for every perp | none — one `tickers.<SYMBOL>` subscription per symbol, which carries funding **and** last price; frames after the first are **deltas**, so absent fields must never publish a zero |
-| WS balance split | approximated from `crossWalletBalance` / `walletBalance` | exact: `availableToWithdraw` / `walletBalance` per coin |
-| Non-zero error reply | the SDK throws | the native SDK **resolves** a non-zero `retCode` by default — the REST client is constructed with `throwExceptions: true`, without which a rejected order would look like success |
+| Quirk | Binance (USDⓈ-M) | Bybit (v5 linear) | OKX (v5 swap) |
+|---|---|---|---|
+| Credentials | key + secret | key + secret | key + secret + **passphrase** (`apiPass`; ccxt calls it `password`). The first venue to read `secrets.apiPassphrase` — absent, the factory fails loud rather than 50104-ing on the first signed call |
+| Testnet | separate domain + separate keys | separate domain + separate keys | **no testnet** — demo trading is a *flag* on the same account (`demoTrading: true`, ccxt `setSandboxMode(true)`); only the WS host differs (`wspap` vs `ws`) |
+| Contract size | `1` except the multiplier listings | `1` except the multiplier listings | **per-instrument `ctVal`** (`BTC-USDT-SWAP` = 0.01 BTC); ~half the live universe is ≠ 1. `sz`/`minSz`/`lotSz` are **contract counts**, which is already `computeQty`'s unit; cross-checked against ccxt `contractSize`, disagreement is fatal |
+| Symbol multipliers | `1000`, `1000000` | `1000`, `10000`, `1000000` (false-positive traps in the live listing: `1INCH`, `2Z`, `0G` — a prefix only counts when a letter follows) | none on today's listing (the face value lives in `ctVal`); the same prefix guard is kept so all three venues behave alike |
+| Funding-interval source | ccxt `info.fundingIntervalHours`, plus a second REST read (`fapi/v1/fundingInfo`) for the non-8h symbols | `info.fundingInterval` **in minutes** (60/240/480; `0` marks the dated `LinearFutures` rows) → `/60`; one call, no second read | **no field at all** — the interval *is* `nextFundingTime − fundingTime` off `GET /api/v5/public/funding-rate`; one extra all-symbol read per registry load (live cadences: 4 h and 8 h) |
+| Funding-fee delivery | WS `ACCOUNT_UPDATE` `updateEventType: 'FUNDING_FEE'`; amount inferred from the matching quote-asset balance change | WS `execution` frame with `execType: 'Funding'` (**unconfirmed for UTA** — see STATUS 0420); `execFee` is the charge, negated into the port's credit-positive convention | `balance_and_position` with `eventType: 'funding_fee'`; the frame carries an **absolute** `cashBal`, so the amount is a delta vs the previous frame (Binance's shape, not Bybit's). Published only when exactly one position row resolves — a two-position settlement falls back to the REST bills |
+| `fundingIncome` (REST money truth) | `NotImplemented` stub (deferred past 0300) | real: ccxt `fetchLedger` → `/v5/account/transaction-log` `type=SETTLEMENT`, field `funding`, **positive = received** | real: ccxt `fetchLedger` → `/api/v5/account/bills`, bill `type=8`, field `balChg`, **positive = received**. The bill type must **not** be sent as a param — `type` is ccxt's reserved *market*-type key and arrives as `instType=8` (`51000`); the row filter is the gate |
+| Margin-mode granularity | per symbol (`setMarginMode('isolated', symbol)`) | **account-wide** on the Unified Trading Account (`POST /v5/account/set-margin-mode` `ISOLATED_MARGIN`); the port's `symbol` is ignored and the call is applied once per process (0420 D1) | **per order** (`tdMode: 'isolated'` on every submit) — there is no margin-mode switch. `setMarginMode` instead enforces the precondition: the account must be on **level `2`** (spot-and-futures); `1` cannot trade derivatives (`51010`), `3`/`4` reject isolated. The switch (`POST /api/v5/account/set-account-level`) is privileged (`51070` → UI-only), so a refusal is a logged skip |
+| Position mode | account-wide `hedged: false` | per symbol *or* per coin (`POST /v5/position/switch-mode` `mode=0`); scoped by `coin: 'USDT'` so one call covers the universe | account-wide (`POST /api/v5/account/set-position-mode` `posMode: 'net_mode'`); rejected with `59000` while anything is open **even when it already matches**, so the mode is read first and a matching account left alone |
+| Leverage | per symbol, one value | per symbol, `buyLeverage === sellLeverage` required in one-way mode | per symbol **and** per margin mode (`mgnMode` is required); `posSide` only exists in long/short mode, so it is omitted |
+| Order transport | WS-API `submitNewFuturesOrder`/`cancelFuturesOrder`; reject code nested at `err.error.code` | WS-API `submitNewOrder`/`cancelOrder` (`category: 'linear'`, `orderLinkId` = `clientOrderId`, `positionIdx: 0`); reject arrives as the **raw reply object** carrying `retCode` | WS-API `submitNewOrder`/`cancelOrder`. A **third** reject shape: a *resolved* reply with `code: '1'` and the real reason at `data[0].sCode`/`sMsg`. The WS trade API also requires the numeric **`instIdCode`** (`instId` deprecated March 2026; without it, `50014`) |
+| `clientOrderId` charset | `^[.A-Za-z0-9_-]{1,36}$` — engine id verbatim | `orderLinkId`, 36 chars, hyphens fine — verbatim | `clOrdId` is **alphanumeric only, 32 chars**, so the engine id is escape-coded both ways (`client-order-id.ts`: `-`→`xd`, `_`→`xu`, `x`→`xx`); an undecodable echo is dropped, never guessed |
+| Order read by client id | ccxt `fetchOrder(id, symbol, { clientOrderId })` | ccxt `fetchOrder` hard-binds the venue `orderId`, so the client-id read goes through `fetchOpenOrders(symbol, …, { orderLinkId })` → `/v5/order/realtime` (open + recently closed = the fill-poll window) | ccxt `fetchOrder('', instId, { clOrdId })` works, but OKX **demands the instrument**, so the read depends on the submit-time `clientOrderId → instId` map; an id this process never submitted is a local typed `NotFound` |
+| `'stop'` order type | native `STOP` | no native stop type: conditional `Market` order with `triggerPrice` + `triggerDirection` (1 rise / 2 fall) | no standalone stop type either: a market order with the attached algo `slTriggerPx` + `slOrdPx: '-1'` (market on trigger) |
+| Rate-limit model | published request **weights** per endpoint (2400/min) | **no weights** — request counts: 600 req/5 s per IP, 10 orders/s per UID. Expressed as one number: `rate_limit_weight_per_minute: 6000` + 10 % order reserve = 600/min = 10/s (0420 D2); every call costs weight 1 | **no weights and no IP-wide aggregate** — per-endpoint counts (20 req/2 s per read endpoint; 60 orders/2 s per instrument). `rate_limit_weight_per_minute: 1200` at a **50 %** reserve makes both lanes true: order 600/min = 10/s, general 600/min = one read endpoint's cap |
+| Public funding stream | one all-symbol `!markPrice@arr@1s` for every perp | none — one `tickers.<SYMBOL>` subscription per symbol, which carries funding **and** last price; frames after the first are **deltas**, so absent fields must never publish a zero | **two** per-symbol channels: `funding-rate` → `FundingPredicted`, `tickers` → `MarketTick`. No refcount needed (nothing shares a topic); frames are full snapshots, but `""` still must never publish a zero |
+| WS balance split | approximated from `crossWalletBalance` / `walletBalance` | exact: `availableToWithdraw` / `walletBalance` per coin | exact: `availBal` / `frozenBal` per currency |
+| Non-zero error reply | the SDK throws | the native SDK **resolves** a non-zero `retCode` by default — the REST client is constructed with `throwExceptions: true`, without which a rejected order would look like success | REST throws the whole `{code, msg, data}` envelope; `code: '0'`/`'1'` are envelope values, **not** error codes — the real code is `data[0].sCode` |
+| WS-API login | SDK default | SDK default | the SDK's on-connect login races `sendWSAPIRequest`'s own; the second login gets `60031` and OKX **closes the socket**, so the WS-API client is built with `authPrivateConnectionsOnConnect: false` (it subscribes to no topics, so one login on first use is enough) |
 
 ## ccxt / native split (`08` §6)
 
 - **ccxt** backs market **metadata** (`loadMarkets`) and **REST** funding/order fallback.
-- The **native** lib (Binance → `binance`, Bybit → `bybit-api`; both tiagosiebler SDKs, same
-  idioms) owns the **hot-path WS** (public/private streams, WS-API orders) and, on Bybit, the
-  account-setup writes ccxt would mis-map to the classic per-symbol isolated switch.
+- The **native** lib (Binance → `binance`, Bybit → `bybit-api`, OKX → `okx-api`; all three
+  tiagosiebler SDKs, same idioms) owns the **hot-path WS** (public/private streams, WS-API
+  orders) and, on Bybit/OKX, the account-setup writes ccxt would mis-map (Bybit: the classic
+  per-symbol isolated switch; OKX: no unified analogue for the account-level read at all).
 - The adapter is the only place that knows which; the core sees only the port. Keep
   network-touching paths **constructor-injectable** (`createBinanceAdapter({ client, … })`,
   `createBybitAdapter({ client, … })`) so unit tests inject a fixture-backed fake and run
@@ -80,9 +87,11 @@ silently mis-sizes every future order, so there is no "warn and continue".
 - **Error mapping + rate limiter** → task 0200. 0190 uses only `NotImplemented` stubs for
   trade-side methods and builds no error infra (KISS).
 - **Fixture capture tool** → task 0250, venue-parameterized at 0420:
-  `npm run capture -- --venue binance|bybit --set …`.
+  `npm run capture -- --venue binance|bybit|okx --set …`.
 - **Testnet verification tier** (task 0260, venue-parameterized at 0420) →
-  `npm run test:testnet -- --venue binance|bybit`. One `src/testnet/` harness with a JSON
-  summary artifact; credential-gated (`<VENUE>_TESTNET_API_KEY`/`_SECRET`), skips clean
-  without them. Excluded from `verify`; 0430–0460 add a row to the venue map.
+  `npm run test:testnet -- --venue binance|bybit|okx`. One `src/testnet/` harness with a JSON
+  summary artifact; credential-gated (`<VENUE>_TESTNET_API_KEY`/`_SECRET`, plus
+  `OKX_TESTNET_PASSPHRASE` on OKX — where it runs against **demo trading**, not a testnet),
+  skips clean without them. Excluded from `verify`; 0440–0460 add a row to the venue map.
+  Observed venue divergences → `docs/testnet-notes.md`.
 - Core-purity rule → `src/core/CLAUDE.md`; test tiers/conventions → `test/CLAUDE.md`.

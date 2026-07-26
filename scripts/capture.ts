@@ -1,14 +1,15 @@
 /**
  * `npm run capture` — records real venue responses into committed fixtures (task
  * 0250; spec `0000` §5). Thin CLI over the per-venue capture drivers
- * (`src/capture/capture-{binance,bybit}.ts`); no test code imported (CLI must not
+ * (`src/capture/capture-{binance,bybit,okx}.ts`); no test code imported (CLI must not
  * depend on `test/`).
  *
- *   npm run capture -- --venue binance|bybit --set markets|public-ws|private-ws|orders \
+ *   npm run capture -- --venue binance|bybit|okx --set markets|public-ws|private-ws|orders \
  *     [--count N] [--window-ms N] [--out DIR]
  *
  * `private-ws`/`orders` read testnet keys from env (`<VENUE>_TESTNET_API_KEY` /
- * `_SECRET`) and fail loud, non-zero, when absent — mirrors the integration-gate
+ * `_SECRET`, plus `OKX_TESTNET_PASSPHRASE` on OKX — that venue signs with three
+ * credentials) and fail loud, non-zero, when absent — mirrors the integration-gate
  * convention (skip loudly, never silently no-op).
  *
  * A new venue is one entry in {@link DRIVERS} (data, not a branch): its driver module
@@ -17,6 +18,7 @@
 
 import * as binance from '../src/capture/capture-binance.js'
 import * as bybit from '../src/capture/capture-bybit.js'
+import * as okx from '../src/capture/capture-okx.js'
 
 const SETS = ['markets', 'public-ws', 'private-ws', 'orders'] as const
 type Set_ = (typeof SETS)[number]
@@ -29,7 +31,7 @@ interface Driver {
   captureOrders(outDir?: string): Promise<void>
 }
 
-const DRIVERS: Record<string, Driver> = { binance, bybit }
+const DRIVERS: Record<string, Driver> = { binance, bybit, okx }
 const VENUES = Object.keys(DRIVERS)
 
 const USAGE = [
