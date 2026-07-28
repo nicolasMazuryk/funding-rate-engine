@@ -32,7 +32,6 @@ import { RestClientV3, WebsocketAPIClient, WebsocketClientV3 } from 'bitget-api'
 import {
   type Balances,
   bitget,
-  type FundingHistory,
   type FundingRate,
   type FundingRateHistory,
   type FundingRates,
@@ -68,17 +67,20 @@ export interface BitgetMarketClient {
   /** Account-wide open orders — private-stream reprime + the stale reduce-only sweep. */
   fetchOpenOrders(symbol?: string, since?: number, limit?: number, params?: Record<string, unknown>): Promise<Order[]>
   /**
-   * Funding settlements (`fundingIncome` money truth). Unlike Bybit/OKX — where the credits
-   * have to be filtered out of a generic `fetchLedger` — ccxt's Bitget `fetchFundingHistory`
-   * has a real UTA branch (cursor-paginated financial records), so the rows arrive already
-   * scoped to funding.
+   * Raw UTA financial records (`GET /api/v3/account/financial-records`) — the `fundingIncome`
+   * money truth, read **around** ccxt rather than through it.
+   *
+   * ccxt's `fetchFundingHistory` hits this same endpoint on the UTA branch but cannot read an
+   * isolated position's settlement (observed live, 0470 §7): it keeps only rows typed
+   * `CONTRACT_MAIN_SETTLE_FEE_USER_IN`/`_OUT`, while an **isolated** position's funding is typed
+   * `MARGIN_SETTLE_FEE_USER_IN`/`_OUT` — and even for a matching row it parses the `amount`
+   * field, which is `"0"` there because the credit lands in the position's margin and is carried
+   * on `positionAmount`. Since every order this engine places is isolated (`11` §1), ccxt's
+   * reader returns nothing, always. The adapter therefore parses the rows itself.
+   *
+   * `coin` and `category` are both **required** — omitting either answers `400172`.
    */
-  fetchFundingHistory(
-    symbol?: string,
-    since?: number,
-    limit?: number,
-    params?: Record<string, unknown>,
-  ): Promise<FundingHistory[]>
+  privateUtaGetV3AccountFinancialRecords(params: Record<string, unknown>): Promise<unknown>
 }
 
 /** ccxt (metadata/REST) + native (hot-path WS, orders, account setup) clients for one sub-account. */

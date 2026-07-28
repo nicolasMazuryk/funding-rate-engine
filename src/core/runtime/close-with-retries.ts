@@ -42,7 +42,7 @@ export interface CloseWithRetriesResult {
 }
 
 /** Sleep `ms` on the injected clock (deterministic on a virtual clock; a real clock schedules a timer). */
-function waitMs(clock: Clock, ms: number): Promise<void> {
+export function waitMs(clock: Clock, ms: number): Promise<void> {
   return new Promise((resolve) => {
     clock.scheduleTimer(clock.now() + ms, resolve)
   })

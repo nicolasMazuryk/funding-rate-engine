@@ -8,6 +8,10 @@
  * a `NotImplemented` stub filled by 0200–0240. The taxonomy + rate limiter are 0200;
  * this file builds **no** error infra (KISS). Mirrors the sim's shape so the same core
  * trades against either venue behind the one port.
+ *
+ * `fundingIncome` was the last stub, filled in 0470 §7 off `fapi/v1/income`
+ * (`incomeType=FUNDING_FEE`) once the live tier could finally observe a real settlement —
+ * so all five venues now implement the funding gate's REST safety net (`00_globals.md` §6).
  */
 
 import type { EventBus } from '../../../core/ports/bus.js'
@@ -34,6 +38,7 @@ import type {
 import { createOrderManager, type OrderManager } from '../../../execution/order-manager.js'
 import type { ConsecutiveFailureCounter } from '../../shared/errors.js'
 import { createConsecutiveFailureCounter, NotFoundError } from '../../shared/errors.js'
+import { sumTradeFees } from '../../shared/order-fee.js'
 import type { RateLimiter } from '../../shared/rate-limiter.js'
 import { type BinanceAccountSetup, createBinanceAccountSetup } from './account-setup.js'
 import { mapBinanceError } from './error-map.js'
@@ -65,6 +70,10 @@ const WEIGHT_POSITIONS = 1
 const WEIGHT_BALANCE = 1
 const WEIGHT_OPEN_ORDERS = 40
 const WEIGHT_GET_ORDER = 1
+/** `fapi/v1/userTrades` — the realized-commission read for a filled order (0470 §6). */
+const WEIGHT_USER_TRADES = 5
+/** `fapi/v1/income` — the funding-income read; the heaviest general-lane call at weight 30 (0470 §7). */
+const WEIGHT_INCOME = 30
 /** Account-setup writes (`setLeverage`/`setMarginMode`/`setPositionMode`) — general lane, weight 1. */
 const WEIGHT_ACCOUNT_SETUP = 1
 
@@ -126,6 +135,13 @@ export interface BinanceAdapterDeps {
 /** ccxt reports funding as a fraction (`0.0001`); the engine speaks signed percent (`0.01`). */
 function toSignedPercent(fundingRate: number | undefined): number {
   return (fundingRate ?? 0) * 100
+}
+
+/** The venue symbol off a raw ccxt payload (`info.symbol`), when it carries one. */
+function rawVenueSymbol(info: unknown): string | undefined {
+  if (typeof info !== 'object' || info === null) return undefined
+  const symbol = (info as { symbol?: unknown }).symbol
+  return typeof symbol === 'string' ? symbol : undefined
 }
 
 /** Placeholder public stream when `ws`/`bus` are not injected — every method fails loud. */
@@ -392,6 +408,30 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
     return raw.map((o) => toOrder(o))
   }
 
+  /**
+   * Realized commission for a filled order, summed over its executions.
+   *
+   * Binance's `fapi/v1/order` reports no commission at all (observed live, 0470 §6 — KuCoin is
+   * the other such venue). The money truth lives on `fapi/v1/userTrades`, so a filled order
+   * costs one extra read to become reconcilable (`15` §2). Bounded: only a (partly) filled
+   * order with a missing fee triggers it, and a fill-poll stops once the order is terminal.
+   *
+   * Best-effort by design — a fee read that fails must not turn a successful fill-poll into an
+   * error, so the order comes back fee-less exactly as it does today and reconciliation skips
+   * the fee dimension rather than the whole order.
+   */
+  async function readOrderFee(venueOrderId: string, venue: string): Promise<number | undefined> {
+    try {
+      const trades = await callGeneral(WEIGHT_USER_TRADES, () =>
+        client.fetchMyTrades(venue, undefined, undefined, { orderId: venueOrderId }),
+      )
+      return sumTradeFees(trades, venueOrderId)
+    } catch (err) {
+      log?.('binance: could not read the realized fee for a filled order', { venueOrderId, venue, err })
+      return undefined
+    }
+  }
+
   /** Fill-poll one order by client id. Symbol comes from the stream-maintained map (`11` §6). */
   async function readOrder(clientOrderId: string): Promise<Order> {
     const venue = clientOrderIdToVenue.get(clientOrderId)
@@ -399,7 +439,11 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
       throw new NotFoundError(`BinanceAdapter.getOrder: no known symbol for clientOrderId '${clientOrderId}'`)
     }
     const o = await callGeneral(WEIGHT_GET_ORDER, () => client.fetchOrder(clientOrderId, venue, { clientOrderId }))
-    return toOrder(o)
+    const order = toOrder(o)
+    if (order.fee !== undefined || order.venueOrderId === undefined) return order
+    if (order.status !== 'FILLED' && order.status !== 'PARTIAL') return order
+    const fee = await readOrderFee(order.venueOrderId, venue)
+    return fee === undefined ? order : { ...order, fee }
   }
 
   /**
@@ -556,12 +600,27 @@ export function createBinanceAdapter(deps: BinanceAdapterDeps): ExchangeAdapter 
         .filter((r) => r.timestamp !== undefined && r.timestamp >= range.fromTs && r.timestamp <= range.toTs)
         .map((r) => ({ symbol, rate: toSignedPercent(r.fundingRate), settleTs: r.timestamp as number }))
     },
-    fundingIncome(_symbol: string, _range: TimeRange): Promise<FundingIncome[]> {
-      // NotImplemented stub (header convention). The funding gate is engine-wired in 0300,
-      // but on the credential-free sim; the real ccxt income read (fetch income of type
-      // `FUNDING_FEE`) is DEFERRED past 0300 because it is unverifiable without the
-      // credential-gated testnet tier that 0300's sim-only DoD does not include (SUGGESTIONS).
-      throw new Error('BinanceAdapter.fundingIncome: not implemented (real Binance read deferred past task 0300)')
+    async fundingIncome(symbol: string, range: TimeRange): Promise<FundingIncome[]> {
+      const venue = venueSymbol(symbol)
+      // ccxt pins `incomeType: 'FUNDING_FEE'` on `fapi/v1/income`, so the rows are already
+      // scoped to funding and `amount` is the signed `income` field (positive = received) —
+      // Bitget's and KuCoin's shape, not the ledger/bill-type filter Bybit and OKX need.
+      // `until` is ccxt's unified upper bound; it becomes the venue's `endTime`.
+      const rows = await callGeneral(WEIGHT_INCOME, () =>
+        client.fetchFundingHistory(venue, range.fromTs, undefined, { until: range.toTs }),
+      )
+      const out: FundingIncome[] = []
+      for (const row of rows) {
+        // `row.symbol` is the ccxt unified name; the venue id is only on the raw payload.
+        const rowVenue = rawVenueSymbol(row.info)
+        if (rowVenue !== undefined && rowVenue !== venue) continue
+        const amount = row.amount
+        if (amount === undefined || amount === null || amount === 0) continue
+        const fundingTime = row.timestamp
+        if (fundingTime === undefined || fundingTime < range.fromTs || fundingTime > range.toTs) continue
+        out.push({ symbol, amount, fundingTime })
+      }
+      return out
     },
 
     // ── streams (native WS — 0210 public / 0220 private) ──────────────────────

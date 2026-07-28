@@ -132,6 +132,55 @@ function rawVenueSymbol(info: unknown): string | undefined {
   return typeof symbol === 'string' ? symbol : undefined
 }
 
+/** Settle asset for the linear USDT-perp universe; the `coin` scope of the financial records. */
+const QUOTE_ASSET = 'USDT'
+
+/** The v3 product this adapter trades — the `category` scope of the financial records. */
+const PRODUCT_TYPE = 'USDT-FUTURES'
+
+/** Page size for the financial-records read. One settlement is one row; this is ample. */
+const FINANCIAL_RECORDS_LIMIT = 100
+
+/** One raw `/api/v3/account/financial-records` row, as the venue sends it (numbers as strings). */
+interface FinancialRecord {
+  readonly type?: unknown
+  readonly symbol?: unknown
+  readonly amount?: unknown
+  /** Where an **isolated** position's settlement lands — `amount` is `"0"` on those rows. */
+  readonly positionAmount?: unknown
+  readonly ts?: unknown
+}
+
+/** A raw Bitget numeric field (they arrive as strings) as a finite number, else `undefined`. */
+function num(raw: unknown): number | undefined {
+  const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : Number.NaN
+  return Number.isFinite(n) ? n : undefined
+}
+
+/** The `data.list` rows of a financial-records reply, defensively — the envelope is untyped. */
+function financialRecords(reply: unknown): readonly FinancialRecord[] {
+  if (typeof reply !== 'object' || reply === null) return []
+  const data = (reply as { data?: unknown }).data
+  if (typeof data !== 'object' || data === null) return []
+  const list = (data as { list?: unknown }).list
+  return Array.isArray(list) ? (list as FinancialRecord[]) : []
+}
+
+/**
+ * The direction of a funding settlement row, or `undefined` when the row is not one.
+ *
+ * Bitget types the settlement by **margin mode**: `MARGIN_SETTLE_FEE_USER_*` for an isolated
+ * position (all of this engine's, `11` §1), `CONTRACT_MAIN_SETTLE_FEE_USER_*` for a cross one.
+ * Matching on the shared suffix covers both without pinning either prefix, and the `_IN`/`_OUT`
+ * tail is the credit-positive convention the port wants (`_OUT` is unobserved live).
+ */
+function settlementSign(type: unknown): number | undefined {
+  if (typeof type !== 'string' || !type.includes('SETTLE_FEE_USER_')) return undefined
+  if (type.endsWith('_USER_IN')) return 1
+  if (type.endsWith('_USER_OUT')) return -1
+  return undefined
+}
+
 /** Placeholder public stream when `ws`/`bus` are not injected — every method fails loud. */
 function unwiredPublicStream(): PublicStream {
   const fail = (): never => {
@@ -311,6 +360,12 @@ export function createBitgetAdapter(deps: BitgetAdapterDeps): ExchangeAdapter {
     }
   }
 
+  /** A raw Bitget numeric field (they arrive as strings) as a usable number, else `undefined`. */
+  function numericOrUndefined(raw: unknown): number | undefined {
+    const n = typeof raw === 'string' ? Number(raw) : typeof raw === 'number' ? raw : Number.NaN
+    return Number.isFinite(n) && n > 0 ? n : undefined
+  }
+
   /** Map a ccxt order to the port {@link Order}; symbol resolves via the registry, else stays raw. */
   function toOrder(o: {
     clientOrderId?: string
@@ -328,10 +383,20 @@ export function createBitgetAdapter(deps: BitgetAdapterDeps): ExchangeAdapter {
     const filled = o.filled ?? 0
     // Bitget reports `reduceOnly` as the string `"YES"`/`"yes"` on the raw row; ccxt surfaces
     // the unified boolean when it can parse it.
-    const info = typeof o.info === 'object' && o.info !== null ? (o.info as { reduceOnly?: unknown }) : undefined
+    const info =
+      typeof o.info === 'object' && o.info !== null
+        ? (o.info as { reduceOnly?: unknown; avgPrice?: unknown })
+        : undefined
     const rawReduceOnly = typeof info?.reduceOnly === 'string' ? info.reduceOnly.toLowerCase() : undefined
     const reduceOnly = o.reduceOnly === true || rawReduceOnly === 'yes' || rawReduceOnly === 'true'
+    // ccxt's v3 order parse leaves `average` unset, so a filled order would carry no fill price
+    // at all (observed live, 0470 §6 — the fill was real, the read was blind). The raw row's
+    // `avgPrice` is the venue's own fill-weighted average, in quote currency.
+    const fillPx = o.average ?? numericOrUndefined(info?.avgPrice)
     // Realized fill fee (quote ccy) for the reconciliation fills-dimension (`15` §2, 0400).
+    // Bitget signs a *charge* negative through ccxt while the raw `feeDetail` is positive; the
+    // port's `fee` is a positive cost on every venue, so the magnitude is what travels (0470 §6).
+    // A maker rebate would be indistinguishable from a charge here — noted in SUGGESTIONS.
     const feeCost = o.fee?.cost
     return {
       clientOrderId: o.clientOrderId ?? '',
@@ -340,9 +405,9 @@ export function createBitgetAdapter(deps: BitgetAdapterDeps): ExchangeAdapter {
       side: o.side === 'sell' ? 'short' : 'long',
       type: o.type === 'limit' ? 'limit' : o.type === 'stop' ? 'stop' : 'market',
       status: ccxtOrderStatus(o.status, filled),
-      ...(o.average !== undefined && o.average !== null ? { fillPx: o.average } : {}),
+      ...(fillPx !== undefined && fillPx !== null ? { fillPx } : {}),
       ...(filled > 0 ? { qty: filled } : {}),
-      ...(feeCost !== undefined && feeCost !== null ? { fee: feeCost } : {}),
+      ...(feeCost !== undefined && feeCost !== null ? { fee: Math.abs(feeCost) } : {}),
       ...(reduceOnly ? { reduceOnly: true } : {}),
     }
   }
@@ -544,28 +609,48 @@ export function createBitgetAdapter(deps: BitgetAdapterDeps): ExchangeAdapter {
         .map((r) => ({ symbol, rate: toSignedPercent(r.fundingRate), settleTs: r.timestamp as number }))
     },
     /**
-     * Account funding-income credits (`00_globals.md` §6 REST safety net). The simplest of the
-     * four venues: ccxt's Bitget `fetchFundingHistory` has a real UTA branch, so the rows are
-     * already funding settlements — no bill-type filter (Bybit `SETTLEMENT`, OKX type `8`) and
-     * no stub (Binance). `amount` is signed, **positive = received**, matching the port.
+     * Account funding-income credits (`00_globals.md` §6 REST safety net), parsed from the raw
+     * UTA financial records rather than through ccxt's `fetchFundingHistory`.
      *
-     * The range is still re-checked client-side: the venue pages by cursor and ccxt's `since`
-     * only bounds the first page, so a row outside the window can come back.
+     * ccxt hits the same endpoint but cannot see an **isolated** position's settlement (observed
+     * live, 0470 §7 — the run held a real position across a real settlement and the read came
+     * back empty while the private stream reported the credit): it keeps only rows typed
+     * `CONTRACT_MAIN_SETTLE_FEE_USER_*`, whereas an isolated position's funding is typed
+     * `MARGIN_SETTLE_FEE_USER_*`, and it reads the `amount` field, which is `"0"` on those rows
+     * because the credit lands in the **position's** margin and is carried on `positionAmount`.
+     * Every order this engine places is isolated (`11` §1), so ccxt's reader would always return
+     * nothing. See {@link BitgetMarketClient.privateUtaGetV3AccountFinancialRecords}.
+     *
+     * The sign comes from the row **type**, not from the number: `_USER_IN` is received,
+     * `_USER_OUT` is paid, matching the port's credit-positive convention. Only `_USER_IN` has
+     * been observed live (the harness holds a long into negative funding).
+     *
+     * The range is re-checked client-side: the venue pages by cursor and `startTime` only bounds
+     * the first page, so a row outside the window can come back.
      */
     async fundingIncome(symbol: string, range: TimeRange): Promise<FundingIncome[]> {
       const venue = venueSymbol(symbol)
-      const rows = await callGeneral(WEIGHT_REQUEST, () =>
-        client.fetchFundingHistory(venue, range.fromTs, undefined, { endTime: range.toTs }),
+      const reply = await callGeneral(WEIGHT_REQUEST, () =>
+        client.privateUtaGetV3AccountFinancialRecords({
+          coin: QUOTE_ASSET,
+          category: PRODUCT_TYPE,
+          startTime: range.fromTs,
+          endTime: range.toTs,
+          limit: FINANCIAL_RECORDS_LIMIT,
+        }),
       )
       const out: FundingIncome[] = []
-      for (const row of rows) {
-        const rowVenue = rawVenueSymbol(row.info)
-        if (rowVenue !== undefined && rowVenue !== venue) continue
-        const amount = row.amount
-        if (amount === undefined || amount === null || amount === 0) continue
-        const fundingTime = row.timestamp
+      for (const row of financialRecords(reply)) {
+        if (rawVenueSymbol(row) !== venue) continue
+        const sign = settlementSign(row.type)
+        if (sign === undefined) continue
+        // `positionAmount` for an isolated settlement, `amount` for a cross one — whichever the
+        // venue actually filled in. Both are magnitudes here; the type carries the direction.
+        const magnitude = Math.abs(num(row.positionAmount) ?? num(row.amount) ?? 0)
+        if (magnitude === 0) continue
+        const fundingTime = num(row.ts)
         if (fundingTime === undefined || fundingTime < range.fromTs || fundingTime > range.toTs) continue
-        out.push({ symbol, amount, fundingTime })
+        out.push({ symbol, amount: sign * magnitude, fundingTime })
       }
       return out
     },

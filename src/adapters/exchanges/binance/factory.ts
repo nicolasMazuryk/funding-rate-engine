@@ -14,6 +14,7 @@ import { USDMClient, WebsocketAPIClient, WebsocketClient } from 'binance'
 import {
   type Balances,
   binanceusdm,
+  type FundingHistory,
   type FundingRate,
   type FundingRateHistory,
   type FundingRates,
@@ -21,6 +22,7 @@ import {
   type Order,
   type Position,
   type Ticker,
+  type Trade,
 } from 'ccxt'
 import type { ParsedEnv } from '../../../config/env.js'
 import type { ExchangeProfile } from '../../../config/exchange-schema.js'
@@ -55,6 +57,22 @@ export interface BinanceMarketClient {
   fetchOrder(id: string, symbol?: string, params?: Record<string, unknown>): Promise<Order>
   /** Account-wide open orders — private-stream reprime (0220). */
   fetchOpenOrders(symbol?: string, since?: number, limit?: number, params?: Record<string, unknown>): Promise<Order[]>
+  /**
+   * Executions of one order — the **only** place Binance reports a futures commission
+   * (`fapi/v1/userTrades`); `fetchOrder` carries no `fee` at all (observed live, 0470 §6).
+   */
+  fetchMyTrades(symbol?: string, since?: number, limit?: number, params?: Record<string, unknown>): Promise<Trade[]>
+  /**
+   * Account income scoped to funding — ccxt pins `incomeType: 'FUNDING_FEE'` and hits
+   * `fapi/v1/income`, so rows arrive already filtered and the `income` field is signed with
+   * **positive = received**. The `fundingIncome` money truth (0470 §7), Bitget's shape.
+   */
+  fetchFundingHistory(
+    symbol?: string,
+    since?: number,
+    limit?: number,
+    params?: Record<string, unknown>,
+  ): Promise<FundingHistory[]>
 }
 
 /** ccxt (metadata/REST) + native (hot-path WS, 0210+) clients for one Binance sub-account. */
@@ -101,7 +119,15 @@ export function createBinanceClients(
     // `fetchCurrencies: false` — loadMarkets otherwise hits a *signed* sapi endpoint
     // for currencies the perp adapter never uses, so the public market load stays
     // credential-free (linear USDT perps need only public fapi exchangeInfo).
-    options: { defaultType: 'swap', fetchCurrencies: false },
+    // `fetchOpenOrders.warnWithoutSymbol: false` — the account-wide open-order read
+    // (preflight / flat verification, `11` §6) has no symbol by design, and ccxt
+    // *throws* its stricter-rate-limit warning rather than logging it, so without
+    // this ack every symbol-less `fetchOpenOrders()` fails (observed live, 0470 §5).
+    options: {
+      defaultType: 'swap',
+      fetchCurrencies: false,
+      fetchOpenOrders: { warnWithoutSymbol: false },
+    },
   })
   if (testnet) {
     ccxtClient.urls.api = {

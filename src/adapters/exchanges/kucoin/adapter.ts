@@ -51,6 +51,7 @@ import type {
 import { createOrderManager, type OrderManager } from '../../../execution/order-manager.js'
 import type { ConsecutiveFailureCounter } from '../../shared/errors.js'
 import { createConsecutiveFailureCounter, NotFoundError } from '../../shared/errors.js'
+import { sumTradeFees } from '../../shared/order-fee.js'
 import type { RateLimiter } from '../../shared/rate-limiter.js'
 import { createKucoinAccountSetup, type KucoinAccountSetup, type KucoinAccountSetupClient } from './account-setup.js'
 import { toVenueClientOid } from './client-order-id.js'
@@ -81,6 +82,8 @@ const WEIGHTS = {
   balance: 5,
   /** `GET /api/v1/orders` and `GET /api/v1/orders/byClientOid`. */
   orders: 2,
+  /** `GET /api/v1/fills` — the realized-commission read for a filled order (0470 §6). */
+  fills: 5,
 } as const
 
 /** Everything the adapter needs, all injectable so unit tests run offline (`10` §2). */
@@ -385,7 +388,31 @@ export function createKucoinAdapter(deps: KucoinAdapterDeps): ExchangeAdapter {
     if (row === undefined || row === null) {
       throw new NotFoundError(`KucoinAdapter.getOrder: order '${clientOrderId}' not found`)
     }
-    return { ...toOrder(row), clientOrderId }
+    const order = { ...toOrder(row), clientOrderId }
+    if (order.fee !== undefined || order.venueOrderId === undefined) return order
+    if (order.status !== 'FILLED' && order.status !== 'PARTIAL') return order
+    const fee = await readOrderFee(order.venueOrderId, order.symbol)
+    return fee === undefined ? order : { ...order, fee }
+  }
+
+  /**
+   * Realized commission for a filled order, summed over its executions (`GET /api/v1/fills`).
+   *
+   * KuCoin's order row carries **no fee field at all** — the fill is real, the cost is invisible
+   * (observed live, 0470 §6; Binance behaves the same way). Bounded to a (partly) filled order
+   * whose fee is missing, and best-effort: a failed fills read leaves the order fee-less rather
+   * than failing the fill-poll it rode in on.
+   */
+  async function readOrderFee(venueOrderId: string, symbol: string): Promise<number | undefined> {
+    try {
+      const trades = await callGeneral(WEIGHTS.fills, () =>
+        client.fetchMyTrades(venueSymbol(symbol), undefined, undefined, { orderId: venueOrderId }),
+      )
+      return sumTradeFees(trades, venueOrderId)
+    } catch (err) {
+      log?.('kucoin: could not read the realized fee for a filled order', { venueOrderId, symbol, err })
+      return undefined
+    }
   }
 
   /**

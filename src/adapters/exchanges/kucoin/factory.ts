@@ -45,6 +45,7 @@ import {
   type Order,
   type Position,
   type Ticker,
+  type Trade,
 } from 'ccxt'
 import { FuturesClient, WebsocketAPIClient, WebsocketClient } from 'kucoin-api'
 import type { ParsedEnv } from '../../../config/env.js'
@@ -76,6 +77,11 @@ export interface KucoinMarketClient {
   fetchOrder(id: string, symbol?: string, params?: Record<string, unknown>): Promise<Order>
   /** Account-wide open orders — private-stream reprime + the stale reduce-only sweep. */
   fetchOpenOrders(symbol?: string, since?: number, limit?: number, params?: Record<string, unknown>): Promise<Order[]>
+  /**
+   * Executions of one order (`GET /api/v1/fills`) — the **only** place KuCoin reports a
+   * realized commission; the order row itself carries no fee (observed live, 0470 §6).
+   */
+  fetchMyTrades(symbol?: string, since?: number, limit?: number, params?: Record<string, unknown>): Promise<Trade[]>
   /**
    * Funding settlements (`fundingIncome` money truth). `kucoinfutures.has.fetchFundingHistory`
    * is `true` with a real implementation (`GET /api/v1/funding-history`), so the rows arrive

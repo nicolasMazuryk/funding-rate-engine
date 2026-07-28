@@ -1,0 +1,158 @@
+# Sub-account registry (secret-free) — task 0470.
+#
+# One row per (exchange, strategy) live sub-account. Credentials for these rows live in
+# the gitignored `config/subaccounts.secrets.yaml`, joined on (exchange, strategy).
+# Loader: `src/config/subaccounts.ts`. Adding a row here without a secrets row is a
+# `missing_secret` loader error at use time, not a startup warning.
+
+subaccounts:
+  - exchange: binance
+    strategy: s1-ws
+    sub_account_id: "subaccount4_virtual@fh49pahrnoemail.com"
+    sub_account_label: "subaccount4_virtual@fh49pahrnoemail.com"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: binance
+    strategy: s2
+    sub_account_id: "subaccount2_virtual@oz3bs9bqnoemail.com"
+    sub_account_label: "subaccount2_virtual@oz3bs9bqnoemail.com"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: binance
+    strategy: s4-1a
+    sub_account_id: "subaccount3_virtual@94i3a29gnoemail.com"
+    sub_account_label: "subaccount3_virtual@94i3a29gnoemail.com"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: binance
+    strategy: s6
+    sub_account_id: "subaccount5_virtual@1pusbxqcnoemail.com"
+    sub_account_label: "subaccount5_virtual@1pusbxqcnoemail.com"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: binance
+    strategy: s3a
+    sub_account_id: "subaccount1_virtual@gugwdihonoemail.com"
+    sub_account_label: "subaccount1_virtual@gugwdihonoemail.com"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bybit
+    strategy: s1-ws
+    sub_account_id: "562980791"
+    sub_account_label: "strategy2bybit"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bybit
+    strategy: s2
+    sub_account_id: "66757487"
+    sub_account_label: "CopyTraderSub2"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bybit
+    strategy: s4-1a
+    sub_account_id: "562980750"
+    sub_account_label: "strategy1bybpo9v"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bybit
+    strategy: s6
+    sub_account_id: "562980801"
+    sub_account_label: "strategy41abybit"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bybit
+    strategy: s3a
+    sub_account_id: "66687513"
+    sub_account_label: "CopyTraderSub1"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: okx
+    strategy: s1-ws
+    sub_account_id: "StrategySubAccount1"
+    sub_account_label: "StrategySubAccount1"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: okx
+    strategy: s2
+    sub_account_id: "StrategySubAccount3"
+    sub_account_label: "StrategySubAccount3"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: okx
+    strategy: s4-1a
+    sub_account_id: "StrategySubAccount4"
+    sub_account_label: "StrategySubAccount4"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: okx
+    strategy: s6
+    sub_account_id: "StrategySubAccount5"
+    sub_account_label: "StrategySubAccount5"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: okx
+    strategy: s3a
+    sub_account_id: "StrategySubAccount2"
+    sub_account_label: "StrategySubAccount2"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: kucoin
+    strategy: s1-ws
+    sub_account_id: "6a044cccd331a300010f50ed"
+    sub_account_label: "strategytestkucoin"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: kucoin
+    strategy: s2
+    sub_account_id: "6a049245eb78d80001eef999"
+    sub_account_label: "strategy2kucoin"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: kucoin
+    strategy: s4-1a
+    sub_account_id: "6a044df88371ee0001087136"
+    sub_account_label: "sttestkc3"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: kucoin
+    strategy: s6
+    sub_account_id: "6a044d2ee36e2400018cb01c"
+    sub_account_label: "sttestkc2"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: kucoin
+    strategy: s3a
+    sub_account_id: "6a0359db1d874d0001bf4cc9"
+    sub_account_label: "strategy1kucoin"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bitget
+    strategy: s1-ws
+    sub_account_id: "3123761045"
+    sub_account_label: "strategy_1_ws-bitget"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bitget
+    strategy: s2
+    sub_account_id: "5231707802"
+    sub_account_label: "strategy_2-bitget"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bitget
+    strategy: s4-1a
+    sub_account_id: "4501259529"
+    sub_account_label: "strategy_4_1a-bitget"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bitget
+    strategy: s6
+    sub_account_id: "9932607584"
+    sub_account_label: "strategy_6-bitget"
+    allocated_capital_usdt: 100
+    status: active
+  - exchange: bitget
+    strategy: s3a
+    sub_account_id: "9177950863"
+    sub_account_label: "strategy_3a-bitget"
+    allocated_capital_usdt: 100
+    status: active

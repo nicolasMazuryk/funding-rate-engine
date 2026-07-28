@@ -18,6 +18,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:e2e": "vitest run --config vitest.e2e.config.ts",
     "test:testnet": "node --experimental-transform-types --import ./scripts/register-ts.mjs scripts/testnet.ts",
+    "test:live": "node --experimental-transform-types --import ./scripts/register-ts.mjs scripts/live.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "node src/persistence/db/migrate.ts",
     "verify": "npm run typecheck && npm run check && npm run test"

@@ -18,7 +18,7 @@
  *    funding settlements — no ledger/bill-type filter (Bybit, OKX) and not a stub (Binance).
  */
 
-import type { Balances, FundingHistory, FundingRate, FundingRateHistory, Order, Position, Ticker } from 'ccxt'
+import type { Balances, FundingHistory, FundingRate, FundingRateHistory, Order, Position, Ticker, Trade } from 'ccxt'
 import { describe, expect, it, vi } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createKucoinAdapter } from '../../../../../src/adapters/exchanges/kucoin/adapter.js'
@@ -69,6 +69,9 @@ function makeClient(initial: readonly string[]) {
       } as Order)
     },
     fetchOpenOrders() {
+      return Promise.resolve([])
+    },
+    fetchMyTrades() {
       return Promise.resolve([])
     },
     fetchFundingHistory() {
@@ -368,6 +371,67 @@ describe('createKucoinAdapter — getOrder reads by clientOid, with NO symbol', 
     await adapter.init()
     await adapter.getOrder('BTC-1785080220000-exit-9')
     expect(c.orderReads).toHaveLength(1)
+  })
+
+  it('tops a filled order up with the realized fee from /fills — the order row carries none (0470 §6)', async () => {
+    const clock = createVirtualClock(0)
+    const { client } = makeClient(['clean-perp-btc'])
+    const tradeReads: unknown[][] = []
+    const adapter = createKucoinAdapter({
+      client: {
+        ...client,
+        // A done KuCoin order, verbatim: `average` and `filled`, and no fee field anywhere.
+        fetchOrder: (_id, _symbol, params) =>
+          Promise.resolve({
+            clientOrderId: (params as { clientOid?: string } | undefined)?.clientOid,
+            id: '471221602835587074',
+            info: { symbol: 'XBTUSDTM' },
+            status: 'closed',
+            average: 0.7134,
+            filled: 1,
+          } as Order),
+        fetchMyTrades: (symbol, since, limit, params) => {
+          tradeReads.push([symbol, since, limit, params])
+          return Promise.resolve([
+            { order: '471221602835587074', fee: { cost: 0.00042804, currency: 'USDT' } },
+            { order: 'someone-elses-order', fee: { cost: 5, currency: 'USDT' } },
+          ] as unknown as Trade[])
+        },
+      },
+      clock,
+    })
+    await adapter.init()
+
+    const order = await adapter.getOrder('BTC-1785080220000-entry-1')
+
+    expect(order.status).toBe('FILLED')
+    expect(order.fee).toBeCloseTo(0.00042804, 10)
+    expect(tradeReads).toEqual([['XBTUSDTM', undefined, undefined, { orderId: '471221602835587074' }]])
+  })
+
+  it('does not read fills for a resting order, and survives a fills read that fails', async () => {
+    const clock = createVirtualClock(0)
+    const { client } = makeClient(['clean-perp-btc'])
+    const fetchMyTrades = vi.fn(() => Promise.reject(new Error('fills unavailable')))
+    const resting = createKucoinAdapter({ client: { ...client, fetchMyTrades }, clock })
+    await resting.init()
+    expect((await resting.getOrder('BTC-1785080220000-entry-1')).fee).toBeUndefined()
+    expect(fetchMyTrades).not.toHaveBeenCalled()
+
+    const filled = createKucoinAdapter({
+      client: {
+        ...client,
+        fetchOrder: () =>
+          Promise.resolve({ id: 'k-1', info: { symbol: 'XBTUSDTM' }, status: 'closed', filled: 1 } as Order),
+        fetchMyTrades,
+      },
+      clock,
+    })
+    await filled.init()
+    const order = await filled.getOrder('BTC-1785080220000-entry-1')
+    expect(order.status).toBe('FILLED')
+    expect(order.fee).toBeUndefined() // degraded, not failed
+    expect(fetchMyTrades).toHaveBeenCalledTimes(1)
   })
 
   it('turns an empty venue row into a typed NotFound rather than a half-built Order', async () => {

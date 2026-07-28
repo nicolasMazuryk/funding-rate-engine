@@ -41,14 +41,28 @@ function stepCount(value: number, step: number): number {
   return Math.abs(nearest - ratio) <= tolerance ? nearest : Math.floor(ratio)
 }
 
-/** Floor `value` down to a multiple of `step` (lot step); float-noise safe. */
-function floorToStep(value: number, step: number): number {
-  return stepCount(value, step) * step
+/**
+ * `units * step` with the binary-float noise stripped — see {@link roundToStep} for why a
+ * venue rejects the raw product. Every on-grid value the core hands a venue goes through here.
+ */
+function onGrid(units: number, step: number): number {
+  return Number((units * step).toPrecision(15))
 }
 
-/** Round `value` to the nearest multiple of `step` (tick). */
+/** Floor `value` down to a multiple of `step` (lot step); float-noise safe. */
+function floorToStep(value: number, step: number): number {
+  return onGrid(stepCount(value, step), step)
+}
+
+/**
+ * Round `value` to the nearest multiple of `step` (tick), then strip the binary-float noise
+ * that `units * step` leaves behind: `1596 * 0.0001` is `0.15960000000000002`, and a venue
+ * reading the decimal string rejects it outright (Binance "Precision is over the maximum
+ * defined for this asset.", observed live in 0470 §5). 15 significant digits is comfortably
+ * inside a double's ~15–17 and far beyond any venue's tick.
+ */
 function roundToStep(value: number, step: number): number {
-  return Math.round(value / step) * step
+  return onGrid(Math.round(value / step), step)
 }
 
 /** Ceil `value` up to a multiple of `step` (lot step); float-noise safe (a value already on-grid stays put). */
@@ -57,7 +71,7 @@ function ceilToStep(value: number, step: number): number {
   const nearest = Math.round(ratio)
   const tolerance = RATIO_EPSILON * Math.max(1, Math.abs(ratio))
   const units = Math.abs(nearest - ratio) <= tolerance ? nearest : Math.ceil(ratio)
-  return units * step
+  return onGrid(units, step)
 }
 
 /**

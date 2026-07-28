@@ -24,7 +24,7 @@ the tier above cannot.
 | **Integration** | `test/integration/**` | a real adapter honors the `ExchangeAdapter` port against a real venue (testnet) or a real Postgres | Docker Postgres and/or venue testnet credentials | slower, networked | no — `npm run test:integration`, opt-in |
 | **Testnet** | per-venue, inside integration | venue-specific quirks (precision, error mapping, WS reconnect) hold against the real exchange, no money at risk | venue testnet keys | slower, networked | no |
 | **E2E** | `test/e2e/**` | full instance wiring (scheduler → intent → execution → persistence) end to end | simulated venue + real Docker Postgres + real local WAL | medium | no — `npm run test:e2e`, opt-in |
-| **Live** | `0470`–`0500` harness | production behavior under real money, hard-capped | live keys, hard caps, auto-flatten | real money, slow | no — explicit command only, never automated |
+| **Live** | `src/live/`, run via `npm run test:live` | production behavior under real money: real fills, real fees, real precision rejects, real funding settlement | live keys in the gitignored secrets YAML; compiled-in 25/50 USD caps; unconditional teardown | real money, slow | no — explicit command only, never automated |
 
 ## What each tier is for (when a task must add one)
 
@@ -46,9 +46,15 @@ the tier above cannot.
   instance on the virtual clock + sim venue but real Docker Postgres + real local WAL.
   Populated immediately before the first real strategy, and grown per strategy
   (`0280`–`0350`) — one scenario file per strategy plugging into `harness.ts`.
-- **Live** is only ever run via the documented harness commands in tasks `0470`–`0500`
-  — never scripted, automated, or expanded in scope by an unrelated task
-  (`docs/plan/EXECUTION.md` "Live tiers" rule).
+- **Live** now exists (task `0470`): `src/live/` runs three suites — `self-test` (order
+  opens and cancels, cap refuses an over-sized order), `fill-test` (a real fill and a
+  reduce-only close), `funding-test` (a position held across a real settlement) — against
+  all five production venues through the same `ExchangeAdapter` the engine uses. Every
+  order passes a compiled-in notional cap (25 USD/order, 50 USD exposure) and every run
+  ends with a teardown that must **verify** the account flat. It is only ever run via the
+  documented command below — never scripted, automated, or expanded in scope by an
+  unrelated task (`docs/plan/EXECUTION.md` "Live tiers" rule). Venue behavior observed
+  live is recorded in `docs/live-notes.md`; read it before adding a suite or check.
 
 ## Determinism (load-bearing, all pre-live tiers)
 
@@ -66,6 +72,8 @@ rule and enforcement: `test/CLAUDE.md` "Determinism rule".
 | `npm run test:integration` | `vitest run --config vitest.integration.config.ts` (needs `docker compose up` for Postgres) |
 | `npm run test:e2e` | `vitest run --config vitest.e2e.config.ts` — full-instance e2e tier (needs `docker compose up` for Postgres + local WAL) |
 | `npm run replay -- <trace> [--expect <golden>] [--json]` | replay a trace against the current core; see the `replay` skill |
+| `npm run test:testnet -- --venue <v>` | venue testnet/demo tier (no money at risk); see the `testnet` skill |
+| `npm run test:live -- --subaccount <id> --venue <v> --suite <s>` | **real money** on a production venue, hard-capped; see the `live-tier` skill |
 
-See the `verify`, `replay`, and `scenario` skills (`.claude/skills/`) for how to invoke
-and interpret each of these as an agent action.
+See the `verify`, `replay`, `scenario`, `testnet`, and `live-tier` skills
+(`.claude/skills/`) for how to invoke and interpret each of these as an agent action.

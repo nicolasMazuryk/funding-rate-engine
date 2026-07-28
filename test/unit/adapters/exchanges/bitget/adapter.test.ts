@@ -16,7 +16,7 @@
  *    it is not a stub (Binance). `amount` is signed, positive = received.
  */
 
-import type { Balances, FundingHistory, FundingRate, FundingRateHistory, Order, Position, Ticker } from 'ccxt'
+import type { Balances, FundingRate, FundingRateHistory, Order, Position, Ticker } from 'ccxt'
 import { describe, expect, it, vi } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createBitgetAdapter } from '../../../../../src/adapters/exchanges/bitget/adapter.js'
@@ -73,8 +73,8 @@ function makeClient(initial: readonly string[]) {
     fetchOpenOrders() {
       return Promise.resolve([])
     },
-    fetchFundingHistory() {
-      return Promise.resolve([])
+    privateUtaGetV3AccountFinancialRecords() {
+      return Promise.resolve({ data: { list: [] } })
     },
   }
   return { client, setStems: (s: string[]) => (stems = s), loads: () => loads, fundingReads: () => fundingReads }
@@ -375,30 +375,103 @@ describe('createBitgetAdapter — account REST reads', () => {
     ])
   })
 
+  it('reads the fill price off the raw avgPrice — ccxt v3 leaves `average` unset (0470 §6)', async () => {
+    const adapter = await withClient({
+      fetchOpenOrders: () =>
+        Promise.resolve([
+          {
+            clientOrderId: 'BTC-1-entry-1',
+            id: 'bg-1',
+            // A filled v3 row exactly as the venue returns it: no `average`, no `price`.
+            info: { symbol: 'BTCUSDT', avgPrice: '0.1645', cumExecQty: '31' },
+            side: 'buy',
+            type: 'limit',
+            status: 'closed',
+            filled: 31,
+            fee: { cost: -0.0050964, currency: 'USDT' },
+          },
+        ] as unknown as Order[]),
+    })
+
+    expect(await adapter.getOpenOrders('BTC')).toEqual([
+      {
+        clientOrderId: 'BTC-1-entry-1',
+        venueOrderId: 'bg-1',
+        symbol: 'BTC',
+        side: 'long',
+        type: 'limit',
+        status: 'FILLED',
+        fillPx: 0.1645,
+        qty: 31,
+        // Bitget signs a charge negative through ccxt; the port's fee is a positive cost.
+        fee: 0.0050964,
+      },
+    ])
+  })
+
+  it('prefers ccxt `average` when present, and treats avgPrice "0" as absent', async () => {
+    const adapter = await withClient({
+      fetchOpenOrders: () =>
+        Promise.resolve([
+          {
+            clientOrderId: 'a',
+            info: { symbol: 'BTCUSDT', avgPrice: '0.9' },
+            side: 'buy',
+            type: 'limit',
+            status: 'closed',
+            average: 0.5,
+            filled: 1,
+          },
+          // `avgPrice: '0'` is Bitget's "nothing filled yet" marker, not a price of zero.
+          {
+            clientOrderId: 'b',
+            info: { symbol: 'BTCUSDT', avgPrice: '0' },
+            side: 'buy',
+            type: 'limit',
+            status: 'open',
+            filled: 0,
+          },
+        ] as unknown as Order[]),
+    })
+
+    const [filled, resting] = await adapter.getOpenOrders('BTC')
+    expect(filled?.fillPx).toBe(0.5)
+    expect(resting?.fillPx).toBeUndefined()
+  })
+
   it('getOrder throws NotFound for a clientOrderId with no known symbol (submit populates the map)', async () => {
     const adapter = await withClient({})
     await expect(adapter.getOrder('unknown')).rejects.toThrow(/no known symbol for clientOrderId 'unknown'/)
   })
 })
 
-describe('createBitgetAdapter — fundingIncome (real fetchFundingHistory read)', () => {
+describe('createBitgetAdapter — fundingIncome (raw UTA financial records, 0470 §7)', () => {
   const RANGE = { fromTs: 1_000, toTs: 10_000 }
 
-  /** One settlement row as ccxt's Bitget UTA branch surfaces it (raw row under `info`). */
-  function fundingRow(amount: number | undefined, timestamp: number | undefined, venue = 'BTCUSDT'): FundingHistory {
-    return { info: { symbol: venue }, symbol: 'BTC/USDT:USDT', code: 'USDT', amount, timestamp } as FundingHistory
+  /**
+   * One `/api/v3/account/financial-records` row as the venue really sends it — numbers as
+   * strings, and an **isolated** settlement carrying its money on `positionAmount` while
+   * `amount` stays `"0"` (observed live; this exact shape is what ccxt's reader drops).
+   */
+  function record(over: Record<string, unknown>): Record<string, unknown> {
+    return { category: 'USDT-FUTURES', coin: 'USDT', symbol: 'BTCUSDT', positionType: 'isolated', ...over }
   }
 
-  async function withFunding(rows: FundingHistory[]): Promise<{ adapter: ExchangeAdapter; args: unknown[][] }> {
+  const isolatedCredit = (positionAmount: string, ts: string, over: Record<string, unknown> = {}) =>
+    record({ type: 'MARGIN_SETTLE_FEE_USER_IN', amount: '0', positionAmount, ts, ...over })
+
+  async function withRecords(
+    list: Array<Record<string, unknown>>,
+  ): Promise<{ adapter: ExchangeAdapter; args: unknown[] }> {
     const clock = createVirtualClock(0)
     const { client } = makeClient(['clean-perp-btc'])
-    const args: unknown[][] = []
+    const args: unknown[] = []
     const adapter = createBitgetAdapter({
       client: {
         ...client,
-        fetchFundingHistory: (symbol, since, limit, params) => {
-          args.push([symbol, since, limit, params])
-          return Promise.resolve(rows)
+        privateUtaGetV3AccountFinancialRecords: (params) => {
+          args.push(params)
+          return Promise.resolve({ data: { list } })
         },
       },
       clock,
@@ -407,35 +480,63 @@ describe('createBitgetAdapter — fundingIncome (real fetchFundingHistory read)'
     return { adapter, args }
   }
 
-  it('maps signed amounts straight through — positive = received, no negation and no bill filter', async () => {
-    const { adapter } = await withFunding([fundingRow(0.42, 2_000), fundingRow(-0.13, 3_000)])
+  it('reads an isolated settlement off positionAmount, which ccxt would have parsed as zero', async () => {
+    const { adapter } = await withRecords([isolatedCredit('0.03354917', '2000')])
     expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([
-      { symbol: 'BTC', amount: 0.42, fundingTime: 2_000 },
-      { symbol: 'BTC', amount: -0.13, fundingTime: 3_000 },
+      { symbol: 'BTC', amount: 0.03354917, fundingTime: 2_000 },
     ])
   })
 
-  it('queries the venue symbol over the range (since + an explicit endTime param)', async () => {
-    // ccxt's `since` bounds only the first page of the cursor-paginated read, hence the
-    // explicit `endTime` — and hence the client-side range re-check below.
-    const { adapter, args } = await withFunding([])
-    await adapter.fundingIncome('BTC', RANGE)
-    expect(args[0]).toEqual(['BTCUSDT', 1_000, undefined, { endTime: 10_000 }])
+  it('takes the direction from the row type, not the number — _USER_OUT is a charge', async () => {
+    const { adapter } = await withRecords([
+      record({ type: 'MARGIN_SETTLE_FEE_USER_OUT', amount: '0', positionAmount: '0.02', ts: '2000' }),
+      // Cross margin types differently and fills `amount` instead; both must map.
+      record({ type: 'CONTRACT_MAIN_SETTLE_FEE_USER_IN', amount: '0.5', ts: '3000', positionType: 'cross' }),
+    ])
+    expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([
+      { symbol: 'BTC', amount: -0.02, fundingTime: 2_000 },
+      { symbol: 'BTC', amount: 0.5, fundingTime: 3_000 },
+    ])
   })
 
-  it('drops out-of-range rows, zero amounts, and rows for another venue symbol', async () => {
-    const { adapter } = await withFunding([
-      fundingRow(0.5, 500), // before the window
-      fundingRow(0.5, 99_000), // after the window
-      fundingRow(0, 2_000), // zero settlement — not an income event
-      fundingRow(0.5, 2_000, 'ETHUSDT'), // another instrument's settlement
-      fundingRow(0.5, 2_500),
+  it('scopes the read by coin and category — omitting either answers 400172', async () => {
+    const { adapter, args } = await withRecords([])
+    await adapter.fundingIncome('BTC', RANGE)
+    expect(args[0]).toEqual({
+      coin: 'USDT',
+      category: 'USDT-FUTURES',
+      startTime: 1_000,
+      endTime: 10_000,
+      limit: 100,
+    })
+  })
+
+  it('drops non-settlement rows, other symbols, zero amounts and out-of-range timestamps', async () => {
+    const { adapter } = await withRecords([
+      record({ type: 'MARIN_BUY_DEAL', amount: '-20.1', ts: '2000' }),
+      record({ type: 'MARGIN_BACK', amount: '11.65', ts: '2000' }),
+      isolatedCredit('0.5', '2000', { symbol: 'ETHUSDT' }),
+      isolatedCredit('0', '2000'),
+      isolatedCredit('0.5', '500'),
+      isolatedCredit('0.5', '99000'),
+      isolatedCredit('0.5', '2500'),
     ])
     expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([{ symbol: 'BTC', amount: 0.5, fundingTime: 2_500 }])
   })
 
   it('drops a row with no timestamp — an unplaceable settlement is never dated by guesswork', async () => {
-    const { adapter } = await withFunding([fundingRow(0.25, undefined)])
+    const { adapter } = await withRecords([record({ type: 'MARGIN_SETTLE_FEE_USER_IN', positionAmount: '0.25' })])
+    expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([])
+  })
+
+  it('survives an envelope with no data.list rather than throwing', async () => {
+    const clock = createVirtualClock(0)
+    const { client } = makeClient(['clean-perp-btc'])
+    const adapter = createBitgetAdapter({
+      client: { ...client, privateUtaGetV3AccountFinancialRecords: () => Promise.resolve({ code: '00000' }) },
+      clock,
+    })
+    await adapter.init()
     expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([])
   })
 })

@@ -78,6 +78,12 @@ export interface SimExchange extends ExchangeAdapter {
   /** Script the predicted rate and publish `FundingPredicted` (`10` §7). Defaults `ts` to `clock.now()`. */
   setPredictedFunding(symbol: string, rate: number, ts?: number): void
   /**
+   * Override an instrument's funding cadence (`00_globals.md` §8.1, validated ∈ {1,2,4,8}). The
+   * seeded venue is uniformly 8 h, which cannot express the short-interval symbol selection the
+   * live tier's `funding-test` is built around (task 0470 phase 7).
+   */
+  setFundingInterval(symbol: string, hours: number): void
+  /**
    * Settle funding at `tSettle` (defaults to `clock.now()`): publish `FundingSettled`,
    * append to history, and — for an open position — publish the signed `FundingFeeAccrued`
    * plus the resulting `BalanceUpdate` (`00_globals.md` §3.1 accrual rule).
@@ -569,6 +575,10 @@ export function createSimExchange(clock: Clock, bus: EventBus): SimExchange {
         return
       }
       positions.set(symbol, { symbol, side, qty, ...(entryPrice !== undefined ? { entryPrice } : {}) })
+    },
+    setFundingInterval(symbol: string, hours: number): void {
+      const instrument = normalize(symbol) // fail-loud on unknown symbol
+      instruments.set(symbol, { ...instrument, fundingIntervalHours: hours })
     },
     setPredictedFunding(symbol: string, rate: number, ts: number = clock.now()): void {
       const reading: Rate = { symbol, rate, ts }

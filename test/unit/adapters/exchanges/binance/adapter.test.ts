@@ -1,4 +1,13 @@
-import type { Balances, FundingRate, FundingRateHistory, FundingRates, Order, Position, Ticker } from 'ccxt'
+import type {
+  Balances,
+  FundingHistory,
+  FundingRate,
+  FundingRateHistory,
+  FundingRates,
+  Order,
+  Position,
+  Ticker,
+} from 'ccxt'
 import { describe, expect, it, vi } from 'vitest'
 import { createVirtualClock } from '../../../../../src/adapters/clock/virtual-clock.js'
 import { createBinanceAdapter } from '../../../../../src/adapters/exchanges/binance/adapter.js'
@@ -52,6 +61,9 @@ function makeClient(initial: readonly string[], intervalsByVenueSymbol: Readonly
     fetchOpenOrders() {
       return Promise.resolve([])
     },
+    fetchMyTrades() {
+      return Promise.resolve([])
+    },
     fetchFundingRates(symbols) {
       const out: FundingRates = {}
       for (const symbol of symbols ?? []) {
@@ -65,6 +77,9 @@ function makeClient(initial: readonly string[], intervalsByVenueSymbol: Readonly
         out[venue] = { symbol: venue, info: { symbol: venue, fundingIntervalHours: hours } } as FundingRate
       }
       return Promise.resolve(out)
+    },
+    fetchFundingHistory() {
+      return Promise.resolve([])
     },
   }
   return { client, setStems: (s: string[]) => (stems = s), loads: () => loads }
@@ -253,5 +268,64 @@ describe('createBinanceAdapter — account REST reads (0220)', () => {
   it('getOrder throws NotFound for a clientOrderId with no known symbol (0230 populates the map)', async () => {
     const adapter = await withClient({})
     await expect(adapter.getOrder('unknown')).rejects.toThrow(/no known symbol for clientOrderId 'unknown'/)
+  })
+})
+
+describe('createBinanceAdapter — fundingIncome (real fapi/v1/income read, 0470 §7)', () => {
+  const RANGE = { fromTs: 1_000, toTs: 10_000 }
+
+  /** One `fapi/v1/income` row as ccxt surfaces it — unified `amount`, raw venue id under `info`. */
+  function incomeRow(amount: number, timestamp: number | undefined, venueSymbol = 'BTCUSDT'): FundingHistory {
+    return {
+      info: { symbol: venueSymbol, incomeType: 'FUNDING_FEE', income: String(amount) },
+      symbol: 'BTC/USDT:USDT',
+      code: 'USDT',
+      id: '1',
+      amount,
+      timestamp,
+    } as FundingHistory
+  }
+
+  async function withIncome(rows: FundingHistory[]): Promise<{ adapter: ExchangeAdapter; args: unknown[][] }> {
+    const clock = createVirtualClock(0)
+    const { client } = makeClient(['clean-perp-btc'])
+    const args: unknown[][] = []
+    const adapter = createBinanceAdapter({
+      client: {
+        ...client,
+        fetchFundingHistory: (symbol, since, limit, params) => {
+          args.push([symbol, since, limit, params])
+          return Promise.resolve(rows)
+        },
+      },
+      clock,
+    })
+    await adapter.init()
+    return { adapter, args }
+  }
+
+  it('maps signed income rows with positive = received', async () => {
+    const { adapter } = await withIncome([incomeRow(0.42, 2_000), incomeRow(-0.13, 3_000)])
+    expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([
+      { symbol: 'BTC', amount: 0.42, fundingTime: 2_000 },
+      { symbol: 'BTC', amount: -0.13, fundingTime: 3_000 },
+    ])
+  })
+
+  it('asks ccxt for the venue symbol over the range (ccxt pins incomeType=FUNDING_FEE itself)', async () => {
+    const { adapter, args } = await withIncome([])
+    await adapter.fundingIncome('BTC', RANGE)
+    expect(args[0]).toEqual(['BTCUSDT', 1_000, undefined, { until: 10_000 }])
+  })
+
+  it('drops other symbols, zero amounts, and out-of-range timestamps', async () => {
+    const { adapter } = await withIncome([
+      incomeRow(0.5, 2_000, 'ETHUSDT'),
+      incomeRow(0, 2_000),
+      incomeRow(0.5, 99_000),
+      incomeRow(0.5, undefined),
+      incomeRow(0.5, 2_500),
+    ])
+    expect(await adapter.fundingIncome('BTC', RANGE)).toEqual([{ symbol: 'BTC', amount: 0.5, fundingTime: 2_500 }])
   })
 })

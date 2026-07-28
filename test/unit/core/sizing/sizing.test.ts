@@ -59,6 +59,14 @@ describe('roundPrice (11 §3 — never rejects)', () => {
   it('rounds up to the nearest tick', () => {
     expect(roundPrice(100.06, instrument())).toBeCloseTo(100.1, 12)
   })
+
+  it('returns a price the venue can parse, not the raw float product', () => {
+    // `1596 * 0.0001` is `0.15960000000000002`; Binance rejected exactly this decimal string
+    // with "Precision is over the maximum defined for this asset." (0470 §5). The assertion is
+    // on the *serialized* form, because that is what reaches the venue.
+    const price = roundPrice(0.1596, instrument({ pricePrecision: 0.0001 }))
+    expect(String(price)).toBe('0.1596')
+  })
 })
 
 describe('checkFeasibility (11 §3 table)', () => {

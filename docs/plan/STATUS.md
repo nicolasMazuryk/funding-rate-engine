@@ -21,15 +21,23 @@ The only cross-task memory kept here. Everything else: read the code, the specs,
 
 ### Open deferrals that touch remaining tasks
 
-- **[high]** Binance `fundingIncome` is still a `NotImplemented` stub — land it in the first live/testnet-touching task (0470/0480).
 - `max_daily_loss_usd` is parsed but NOT enforced (needs realized P&L aggregated across intents).
 - 4 analytics metrics return `insufficient_data` (`P_avg` vs `P_ref`; S3a drop-depth ÷ |F|; S6 realized PRE overhead bp; S6 MAIN slippage) ⇒ **0500 cannot fully gate S6 PRE overhead / MAIN slippage** until that capture lands.
 - S6 `PRE_FUNDING_DELTA` books 0 (PRE fill px/qty not threaded out of the entry sub-machine); the settled charge lands in `FUNDING_PRE` — canary-audit at 0500.
 - S6 live settled-rate timing (a `FundingSettled` lagging the MAIN fill) → the `amount`-derived fallback is an 0490 shadow concern, not coded.
 - Reconciliation gaps: balance dimension deferred; fills check covers entry rung 1 only; the per-close position check assumes flat (concurrent same-symbol intents ⇒ spurious orphan).
 - `s3a` + LONG co-run guard is single-instance only — fleet-level enforcement is 0520.
-- **[high]** KuCoin's **order path is still unverified against the venue** even though its tier ran credentialed 6/6 on live: no sandbox exists and the tier is read-only by design, so `ws-orders.ts` / `account-setup.ts` are typechecked + fixture-tested and nothing more. 0470/0480 must not assume otherwise. Its `private-ws`/`orders` fixtures are hand-authored for the same reason, and the funding-fee **sign** on `position.settlement` is unconfirmed. What *is* live-verified: markets/funding/account reads, both public topics, the private WS handshake + subscriptions, the error taxonomy, and flatness.
+- **KuCoin's order path is now live-verified** (0470): real order → fill → reduce-only close, and the `position.settlement` funding **sign** confirmed against a real settlement. Its remaining venue shape: margin mode + leverage are stated **per order**, so an isolated submit needs `setMarginMode` + `setLeverage` first (0470 §KuCoin) — the engine's per-instrument account setup already does this; do not drop it on this venue.
 - **Gate.io dropped** (user decision; 0450 skipped, no adapter will exist). `EXCHANGE_IDS` + `config/exchanges.yaml` are now a fixed **5**-key pair. `docs/specs/*` still say six venues — left untouched deliberately (historical source of truth); this note is the deviation record. `docs/plan/tasks/0450_adapter-gateio.md` is kept and marked SKIPPED so a later agent reads a decision, not a missing file.
+
+### Live tier (0470) — what 0480+ must carry
+
+- **[high] `flattenAll` cannot close a position it did not open on OKX.** The OKX adapter submits `tdMode: 'isolated'` on every order (no margin-mode switch exists there), so a reduce-only isolated close cannot see a **cross** position — OKX `51169`. `flattenAll` is also the kill switch's path (`13` §4), so a kill switch that cannot close every position it can *see* is a real gap. Bites only for positions opened outside the engine. Fix or accept explicitly at 0480.
+- **Live caps are compiled-in and reduce-only-exempt** (`src/live/caps.ts`, 25 USD/order, 50 USD exposure). Exposure is reserved on submit and released only on a reduce-only fill — **never on cancel** — so a run that cancels and re-enters ratchets toward the ceiling (this is what limits `funding-test`'s entry ladder to two rungs). 0480 should reconcile the reservation against `getPositions()` rather than widening the cap.
+- **Only `s6` sub-accounts exist** across the five venues; `s1`, `s1-ws`, `s2`, `s3a`, `s4-1a`, `s4-2a` have no provisioned sub-account in `config/subaccounts.yaml`. 0480/0520 need them before any per-strategy live run.
+- **A Bitget Classic-mode sub-account cannot run this engine at all** (every v3/UTA read answers `40084`). Upgrade to UTA before provisioning one (0520).
+- **`funding-test` on OKX is unrun** — it lists no 1 h symbols, so it needs a 4 h-aligned boundary (`00/04/08/12/16/20` UTC). Everything else about OKX funding is verified; the suite passes 7/7 on the other four venues.
+- Live credentials live in gitignored `config/subaccounts.secrets.yaml` joined to committed `config/subaccounts.yaml` — **not** in `.env`. Keys are IP-pinned; from another IP every venue fails auth and preflight names the allowlist hypothesis.
 
 ### New-venue recipe (0460)
 
@@ -102,7 +110,7 @@ The only cross-task memory kept here. Everything else: read the code, the specs,
 | 0440 | adapter-bitget | done | |
 | 0450 | adapter-gateio | done | skipped by decision — venue dropped, no adapter |
 | 0460 | adapter-kucoin | done | read-only live tier (no sandbox exists); order path never venue-verified |
-| 0470 | live-tier-harness | todo | |
+| 0470 | live-tier-harness | done | Scope **widened by the user**: venue-generic, ran live on all five venues, not Binance-only. Deviations: no Postgres/engine boot (adapter-level composition — that is 0480); `TestnetNetwork` += `'prod'`. Three suites (`self-test`/`fill-test`/`funding-test`) all pass on all five, except `funding-test` on OKX (needs a 4 h-aligned boundary). Findings: `docs/live-notes.md`. |
 | 0480 | live-verification-binance | todo | |
 | 0490 | s6-shadow | todo | |
 | 0500 | s6-canary | todo | |

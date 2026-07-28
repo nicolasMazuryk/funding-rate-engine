@@ -14,10 +14,33 @@ The load-bearing property is determinism: same inputs → same trace, every run.
 | Integration | `test/integration/**` | Postgres (separate script) | no — excluded from default verify |
 | Testnet | `src/testnet/`, run via `npm run test:testnet` | venue testnet creds (skips clean without) | no — excluded from default verify |
 | E2E | `test/e2e/**` | sim venue + virtual clock + real Docker Postgres + real local WAL | no — `npm run test:e2e`, opt-in |
+| Live | `src/live/`, run via `npm run test:live` | **real money** on a production venue (skips clean without the secrets YAML) | no — explicit human-run command only |
 
 `npm run verify` (typecheck + `biome check` + `vitest run`) is the gate; it runs the
 unit/scenario/golden tiers. Integration/e2e are opt-in and must never be wired into the
 default run.
+
+## Live conventions (`src/live/`, artifacts in `test/live/`)
+
+The live tier's *code* lives under `src/live/` (it is shipped harness, not test code, and
+`scripts/live.ts` imports nothing from `test/`); only its **artifacts** — verdict JSON and
+trace — land in `test/live/<venue>/`, which is **gitignored**: a live verdict names a real
+sub-account and is never committed. Findings go to `docs/live-notes.md` instead.
+
+- **Unit-test the live machinery, never the venue.** `test/unit/live/**` covers caps,
+  notional math, the cap wrapper, preflight, teardown, symbol pick and the verdict against
+  the sim venue + virtual clock — so the determinism rule below applies unchanged. The
+  venue-touching part is exercised only by the explicit `npm run test:live` command.
+- **The cap wrapper is the choke point, so test through it.** `withNotionalCap` wraps the
+  port object; `engine.ts`, `risk/flatten.ts` and the orphan handler all call
+  `exchange.placeOrder` fire-and-forget, so there is no route around it. A new test that
+  needs a live adapter must take the `CappedAdapter`, never a raw one.
+- **A rejection is not a throw.** The wrapper speaks the order manager's `failSubmit`
+  dialect: publish `OrderUpdate{REJECTED}`, return `{accepted:false}`, never touch the
+  adapter. Assert *both* the rejection and that the adapter was never called.
+- **Every live check registers its cleanup and `assert-flat` runs last**, exactly as on the
+  testnet tier — plus teardown runs again unconditionally in `finally` and from
+  `SIGINT`/`SIGTERM` (memoized, so the normal path pays nothing).
 
 ## E2E conventions (`test/e2e/`)
 

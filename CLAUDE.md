@@ -34,6 +34,7 @@ Overall goal and build order: `docs/specs/0000_agentic-development-environment.m
 | `npm run format` | `biome check --write .` (apply lint/format fixes) |
 | `npm run test` | `vitest run` |
 | `npm run test:integration` | `vitest run --config vitest.integration.config.ts` (needs Docker Postgres; not part of `verify`) |
+| `npm run test:live -- --subaccount <id> [--venue <v>\|--all-venues] [--suite <self-test\|fill-test\|funding-test>] [--parallel] [--json]` | live tier (task 0470): **real orders, real money** on a production venue, capped at 25 USD/order + 50 USD exposure, always torn down flat. Human-run only, never automated; creds from the gitignored `config/subaccounts.secrets.yaml` (absent ⇒ all checks skip, exit 0). Venue quirks: `docs/live-notes.md` |
 | `npm run replay -- <trace> [--expect <golden>] [--json]` | replay a recorded trace through the core, no live venue needed (task 0170) |
 | `npm run analytics -- [--json] [--exchange\|--strategy\|--subaccount <id>] [--from\|--to <ms>]` | read-only trade analytics + fleet rollup over the shared DB (`15` §4/§5, task 0410); needs `DATABASE_URL`, no venue credentials |
 | `npm start` | boot an instance (composition root `src/main.ts`); fail-loud startup (`09` §5), clean SIGTERM shutdown |
@@ -45,7 +46,8 @@ Do not reference commands that do not exist yet; add each command in the task th
 
 - **Skills** (`.claude/skills/`): `/verify` (run + interpret `npm run verify`),
   `/replay` (wrap `npm run replay`, incl. `--json` interpretation), `/scenario` (run one
-  `test/scenarios/**` fault-injection scenario in isolation).
+  `test/scenarios/**` fault-injection scenario in isolation), `/testnet` (venue testnet
+  tier), `/live-tier` (real-money live tier — usage, verdict reading, hard rules).
 - **Hook**: `.claude/settings.json` runs `.claude/hooks/post-edit-check.mjs` after every
   edit — scoped `biome check` + full `tsc --noEmit`, fast feedback, not a `verify`
   substitute.

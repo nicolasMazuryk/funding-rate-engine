@@ -9,3 +9,9 @@ coverage/
 __workflow
 # Generated per-run testnet-tier summary artifact (task 0260) — not a committed fixture.
 test/testnet/
+# Generated per-run live-tier verdict artifact (task 0470) — real-money runs, never committed.
+test/live/
+# Live sub-account API credentials (task 0470). The secret-free registry
+# `config/subaccounts.yaml` and its `.example` template ARE committed; these are not.
+config/subaccounts.secrets.yaml
+registry.yaml
