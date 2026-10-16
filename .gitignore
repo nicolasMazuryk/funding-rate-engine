@@ -15,3 +15,4 @@ test/live/
 # `config/subaccounts.yaml` and its `.example` template ARE committed; these are not.
 config/subaccounts.secrets.yaml
 registry.yaml
+.DS_Store

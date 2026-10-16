@@ -1,4 +1,4 @@
-# CLAUDE.md — funding-drop
+# CLAUDE.md — funding-rate-engine
 
 Event-driven perpetual-futures **funding-harvest** trading engine. One running instance = one exchange, one strategy, one sub-account. Ports-and-adapters architecture with a **pure core**: I/O and venue quirks live at the edges; the strategy runtime is deterministic given its event stream. Keep the core pure; keep the mess at the edges.
 

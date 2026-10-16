@@ -1,5 +1,5 @@
 {
-  "name": "funding-drop",
+  "name": "funding-rate-engine",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -45,5 +45,7 @@
     "fast-check": "^4.9.0",
     "typescript": "^7.0.2",
     "vitest": "^4.1.10"
-  }
+  },
+  "license": "MIT",
+  "description": "Crash-safe, event-driven perpetual-futures funding-rate engine."
 }
