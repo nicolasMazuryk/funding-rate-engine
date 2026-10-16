@@ -1,0 +1,4 @@
+90282ad55272768fcc5de0d286c232d54b64b163:src/adapters/exchanges/kucoin/factory.ts:generic-api-key:100
+04eb42f3d0fc1d4ac3e55969107c2087ee9ebe4d:src/adapters/exchanges/bitget/factory.ts:generic-api-key:92
+469f471408cefa0e260511f7cdcd9837903ac699:src/adapters/exchanges/okx/factory.ts:generic-api-key:78
+efbac81868af970f9a272984459c778655bb04e9:src/adapters/exchanges/bybit/factory.ts:generic-api-key:75
